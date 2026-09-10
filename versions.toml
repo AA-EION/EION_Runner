@@ -1,0 +1,129 @@
+# Runner Forge — SINGLE SOURCE OF TRUTH for every pinned version.
+#
+# RULE: no version string may be hardcoded anywhere else in this repository.
+# Dockerfiles, PowerShell/bash scripts, the Windows app and the macOS app all
+# read their versions from this file (see scripts/README notes in docs/ARCHITECTURE.md).
+#
+# `latest`, `main`, unpinned `apt-get install` and unpinned base images are
+# forbidden. If a pinned artifact 404s at build time the installer scripts STOP
+# and print the exact failing URL — they never fall back to `latest`.
+#
+# NOTE ON SYNTAX: the project brief sketched several keys on one line separated
+# by semicolons (`cmake = "3.31.5"; ninja = "1.12.1"`). That is not valid TOML —
+# TOML requires one key/value pair per line — so the same keys are written one
+# per line here. Key names and values are otherwise verbatim from the brief.
+
+[runner]
+# github/actions-runner release tag (without the leading "v").
+actions_runner = "2.328.0"
+
+[windows_image]
+base = "mcr.microsoft.com/windows/servercore:ltsc2022"
+vs_buildtools = "17.12"
+vs_components = [
+  "Microsoft.VisualStudio.Workload.VCTools",
+  "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+  "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+  "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+  "Microsoft.VisualStudio.Component.VC.CMake.Project",
+]
+cmake = "3.31.5"
+ninja = "1.12.1"
+git = "2.47.1"
+innosetup = "6.3.3"
+sevenzip = "24.09"
+sccache = "0.9.0"
+python = "3.12.8"
+# Image tag applied to the built image: runnerforge/win-build:<tag>
+tag = "1.0.0"
+
+[linux_image]
+base = "ubuntu:24.04"
+cmake = "3.31.5"
+ninja = "1.12.1"
+# Image tag applied to the built image: runnerforge/linux-util:<tag>
+tag = "1.0.0"
+
+[macos_image]
+tart = "2.27.0"
+packer = "1.11.2"
+base_image = "ghcr.io/cirruslabs/macos-tahoe-xcode:26"
+# Tart image tag produced by images/macos/packer: runnerforge-macos:<tag>
+tag = "1.0.0"
+
+[actions]
+checkout = "v4"
+upload_artifact = "v4"
+download_artifact = "v4"
+
+[host_minimums]
+docker_desktop = "4.37.0"
+windows_build = 22000
+macos_version = "26.0"
+
+[project]
+# JUCE and clap-juce-extensions revisions consumed by canary/ and by RecRoll.
+juce = "8.0.4"
+clap_juce_extensions = "1.1.9"
+
+# ---------------------------------------------------------------------------
+# [checksums] — SHA-256 of every binary the image build scripts download.
+#
+# Populated by `scripts/refresh-checksums.sh` is NOT a thing: these values are
+# recorded here by hand after being verified against the publisher. The image
+# install scripts treat a MISSING entry as a hard error — they never skip
+# verification. Keys are "<tool>_<platform>".
+#
+# Values marked UNVERIFIED-<reason> cause install-buildtools.ps1 to abort with
+# a message naming the key, so a stale pin can never silently produce an
+# unverified toolchain.
+# ---------------------------------------------------------------------------
+[checksums]
+runner_linux_x64 = "01066fad3a2893e63e6ca880ae3a1fad5bf9329d60e77ee15f2b97c148c3cd4e"  # 227247880 bytes
+runner_win_x64 = "a73ae192b8b2b782e1d90c08923030930b0b96ed394fe56413a073cc6f694877"  # 97717739 bytes
+runner_osx_arm64 = "30e8c9e34ae3f1f5004d0fd6eb4e42714d1b489ca9c91f5eed3bcbd29c6f446d"  # 125492648 bytes
+cmake_linux_x86_64 = "2984e70515ff60c5e4a41922b5d715a8168a696a89721e3b114e36f453244f72"  # 54990652 bytes
+cmake_windows_x86_64 = "d4d2d4b9ccd68dae975a066fcd42ea9807ef40f79ee6971923fd3788e7917585"
+cmake_macos_universal = "cc8e3d9bef7eee70db52601a5ed60d221436a8def18388effdab0e7d0866f50d"
+ninja_linux = "6f98805688d19672bd699fbbfa2c2cf0fc054ac3df1f0e6a47664d963d530255"  # 123084 bytes
+ninja_win = "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a"  # 275425 bytes
+ninja_mac = "89a287444b5b3e98f88a945afa50ce937b8ffd1dcc59c555ad9b1baf855298c9"  # 281130 bytes
+git_win_x64 = "50b04b55425b5c465d076cdb184f63a0cd0f86f6ec8bb4d5860114a713d2c29a"  # 47241394 bytes
+innosetup_win = "0bcb2a409dea17e305a27a6b09555cabe600e984f88570ab72575cd7e93c95e6"  # 5634744 bytes
+sevenzip_win_x64 = "bdd1a33de78618d16ee4ce148b849932c05d0015491c34887846d431d29f308e"  # 1637343 bytes
+sccache_win_x64 = "35fe3b6348a4a5e693a9c3fff72721599b81a836708cfd943537a83f5434efd9"  # 7787274 bytes
+python_win_x64 = "71bd44e6b0e91c17558963557e4cdb80b483de9b0a0a9717f06cf896f95ab598"  # 27043760 bytes
+
+# ---------------------------------------------------------------------------
+# [urls] — exact download locations. Templated with {v} = the matching version
+# from the tables above. The install scripts substitute {v} and nothing else.
+#
+# CHANGE LOG (§16 requires that a 404 is reported, not silently worked around):
+#   2026-09-10  https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe returned
+#               HTTP 404. The jrsoftware download host no longer serves 6.x
+#               binaries directly; jrsoftware.org/isdl.php now links to the
+#               jrsoftware/issrc GitHub releases. The PINNED VERSION IS
+#               UNCHANGED (6.3.3) — only the host moved. Verified reachable and
+#               hashed from the GitHub release URL below.
+# ---------------------------------------------------------------------------
+[urls]
+runner_linux_x64     = "https://github.com/actions/runner/releases/download/v{v}/actions-runner-linux-x64-{v}.tar.gz"
+runner_win_x64       = "https://github.com/actions/runner/releases/download/v{v}/actions-runner-win-x64-{v}.zip"
+runner_osx_arm64     = "https://github.com/actions/runner/releases/download/v{v}/actions-runner-osx-arm64-{v}.tar.gz"
+cmake_linux_x86_64   = "https://github.com/Kitware/CMake/releases/download/v{v}/cmake-{v}-linux-x86_64.tar.gz"
+cmake_windows_x86_64 = "https://github.com/Kitware/CMake/releases/download/v{v}/cmake-{v}-windows-x86_64.zip"
+cmake_macos_universal= "https://github.com/Kitware/CMake/releases/download/v{v}/cmake-{v}-macos-universal.tar.gz"
+ninja_linux          = "https://github.com/ninja-build/ninja/releases/download/v{v}/ninja-linux.zip"
+ninja_win            = "https://github.com/ninja-build/ninja/releases/download/v{v}/ninja-win.zip"
+ninja_mac            = "https://github.com/ninja-build/ninja/releases/download/v{v}/ninja-mac.zip"
+git_win_x64          = "https://github.com/git-for-windows/git/releases/download/v{v}.windows.1/MinGit-{v}-64-bit.zip"
+innosetup_win        = "https://github.com/jrsoftware/issrc/releases/download/is-6_3_3/innosetup-{v}.exe"
+sevenzip_win_x64     = "https://www.7-zip.org/a/7z2409-x64.exe"
+sccache_win_x64      = "https://github.com/mozilla/sccache/releases/download/v{v}/sccache-v{v}-x86_64-pc-windows-msvc.tar.gz"
+python_win_x64       = "https://www.python.org/ftp/python/{v}/python-{v}-amd64.exe"
+# Visual Studio Build Tools ships only an evergreen bootstrapper; the VERSION is
+# pinned by passing --channelUri for the 17.12 channel to the bootstrapper, which
+# is what install-buildtools.ps1 does. There is no stable per-version .exe URL
+# and therefore no checksum entry for it.
+vs_buildtools_bootstrap = "https://aka.ms/vs/17/release/vs_buildtools.exe"
+vs_buildtools_channel   = "https://aka.ms/vs/17/release.ltsc.{v}/channel"

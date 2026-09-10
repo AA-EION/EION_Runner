@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://runnerforge.dev/schemas/forge.schema.json",
+  "title": "Runner Forge configuration",
+  "$comment": "NO SECRET MAY EVER APPEAR IN THIS FILE. It holds only non-secret identifiers (app ids, installation ids, certificate *names*, Azure endpoint names). Every actual credential — private keys, passwords, client secrets, p12 blobs — lives in the OS keystore (Windows Credential Manager / macOS Keychain) under the key names listed in docs/ARCHITECTURE.md. A file that contains a secret is a bug, not a configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "github", "runners", "signing", "paths", "retention", "limits", "verification", "telemetry"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Config format version. Bumped only for breaking changes."
+    },
+
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "repos", "appId", "installationId"],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "description": "GitHub user or organisation that owns the target repositories."
+        },
+        "repos": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Repository names (without the owner prefix) that these runners serve."
+        },
+        "appId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "GitHub App id. NOT a secret. The App's private key lives in the keystore under 'githubAppPrivateKey'."
+        },
+        "installationId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Installation id of the GitHub App on the owner account. NOT a secret."
+        }
+      }
+    },
+
+    "runners": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per runner class this machine should host.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["classId", "enabled", "replicas", "labels", "jobTimeoutMinutes"],
+        "properties": {
+          "classId": {
+            "enum": ["win-build", "linux-util", "mac-build", "win-ilok", "mac-ilok"],
+            "description": "Runner class identifier. See docs/ARCHITECTURE.md section 'Runner classes'."
+          },
+          "enabled": { "type": "boolean", "default": false },
+          "replicas": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "Concurrent ephemeral runners of this class. Defaults differ per class: win-build 2, linux-util 1, mac-build 1, win-ilok 1 (fixed), mac-ilok 1 (fixed)."
+          },
+          "labels": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Labels the ephemeral runner registers with. Must match the workflow's runs-on."
+          },
+          "jobTimeoutMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 720,
+            "default": 60,
+            "description": "How long a drain waits for an in-flight job before force-stopping it."
+          }
+        },
+        "allOf": [
+          {
+            "$comment": "iLok classes are host processes bound to one physical dongle. More than one is meaningless.",
+            "if": { "properties": { "classId": { "enum": ["win-ilok", "mac-ilok"] } }, "required": ["classId"] },
+            "then": { "properties": { "replicas": { "const": 1 } } }
+          },
+          {
+            "$comment": "A Tart VM clone is heavy; two is the practical ceiling on one Mac.",
+            "if": { "properties": { "classId": { "const": "mac-build" } }, "required": ["classId"] },
+            "then": { "properties": { "replicas": { "maximum": 2 } } }
+          }
+        ]
+      }
+    },
+
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "paceAccount", "paceWcGuid", "paceSignId", "allowSigningService", "windows", "macos"],
+      "properties": {
+        "mode": {
+          "enum": ["cloud", "windows-ilok", "macos-ilok"],
+          "default": "windows-ilok",
+          "description": "AAX signing strategy. 'cloud' needs no dongle; the iLok modes run a host-process runner on the machine holding the dongle."
+        },
+        "paceAccount": { "type": "string", "default": "", "description": "PACE/iLok account name. The password lives in the keystore under 'pacePassword'." },
+        "paceWcGuid": { "type": "string", "default": "", "description": "PACE wrapping certificate GUID passed to wraptool as --wcguid." },
+        "paceSignId": { "type": "string", "default": "", "description": "PACE signing identifier passed to wraptool as --signid." },
+        "allowSigningService": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append --allowsigningservice to wraptool in 'cloud' mode. Requires an iLok Cloud enabled Eden tools licence."
+        },
+        "windows": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "azureEndpoint", "azureAccount", "azureProfile"],
+          "properties": {
+            "provider": {
+              "enum": ["none", "azure-trusted-signing"],
+              "default": "azure-trusted-signing",
+              "description": "Authenticode signing for Windows binaries and the installer. Independent of AAX signing."
+            },
+            "azureEndpoint": { "type": "string", "default": "", "description": "Trusted Signing endpoint, e.g. https://eus.codesigning.azure.net" },
+            "azureAccount": { "type": "string", "default": "" },
+            "azureProfile": { "type": "string", "default": "" }
+          }
+        },
+        "macos": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["teamId", "devIdAppIdentity", "devIdInstallerIdentity", "notarize"],
+          "properties": {
+            "teamId": { "type": "string", "default": "", "description": "Apple Developer Team ID, e.g. ABCDE12345." },
+            "devIdAppIdentity": { "type": "string", "default": "", "description": "Certificate common name, e.g. 'Developer ID Application: Example Ltd (ABCDE12345)'. A name, not a key." },
+            "devIdInstallerIdentity": { "type": "string", "default": "", "description": "Certificate common name, e.g. 'Developer ID Installer: Example Ltd (ABCDE12345)'." },
+            "notarize": { "type": "boolean", "default": true, "description": "Run notarytool submit --wait and stapler staple after signing." }
+          }
+        }
+      }
+    },
+
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workDir", "aaxSdkSource"],
+      "properties": {
+        "workDir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Root for job workspaces, caches, logs, state.json and proof/. Default C:\\ProgramData\\RunnerForge\\work on Windows, ~/Library/Application Support/RunnerForge/work on macOS."
+        },
+        "aaxSdkSource": {
+          "type": "string",
+          "default": "",
+          "description": "Local path to the Avid AAX SDK zip, or a private git URL. NEVER baked into an image layer; mounted from a local named volume at build time. Empty means AAX targets are skipped and the workflow emits an aax-skipped marker artifact."
+        }
+      }
+    },
+
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keepBaseImages", "keepTartImages", "keepCaches", "purgeOnExit", "logRetentionDays"],
+      "properties": {
+        "keepBaseImages": { "type": "boolean", "const": true, "description": "Base Docker images are never purged. Rebuilding them costs tens of minutes." },
+        "keepTartImages": { "type": "boolean", "const": true, "description": "Tart images are never purged; only per-job clones are." },
+        "keepCaches": { "type": "boolean", "default": true, "description": "Keep the FetchContent/sccache/ccache named volumes between runs." },
+        "purgeOnExit": { "type": "boolean", "default": true, "description": "Run the Sweeper automatically when the app closes." },
+        "logRetentionDays": { "type": "integer", "minimum": 1, "maximum": 365, "default": 7 }
+      }
+    },
+
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxDiskGb"],
+      "properties": {
+        "maxDiskGb": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 4096,
+          "default": 120,
+          "description": "Free space preflight requires on the Docker data drive / Tart storage."
+        }
+      }
+    },
+
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canaryRepo", "requiredGreenRuns", "lastProof"],
+      "properties": {
+        "canaryRepo": {
+          "type": "string",
+          "default": "",
+          "description": "owner/repo holding the canary plugin used for end-to-end self-test."
+        },
+        "requiredGreenRuns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3,
+          "description": "Consecutive green self-test runs required before the setup is considered stable."
+        },
+        "lastProof": {
+          "description": "Written by SelfTestService after a self-test. null until the first run.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["runId", "startedAt", "durationSeconds", "conclusion", "artifacts", "runnerNames", "reaperExitCode", "sweeperReclaimedBytes", "verdict"],
+              "properties": {
+                "runId": { "type": "integer", "minimum": 1 },
+                "startedAt": { "type": "string", "format": "date-time" },
+                "durationSeconds": { "type": "integer", "minimum": 0 },
+                "conclusion": { "enum": ["success", "failure", "cancelled", "timed_out"] },
+                "artifacts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "bytes", "fileCount", "verdict"],
+                    "properties": {
+                      "name": { "type": "string", "minLength": 1 },
+                      "bytes": { "type": "integer", "minimum": 0 },
+                      "fileCount": { "type": "integer", "minimum": 0 },
+                      "verdict": { "enum": ["pass", "fail"] }
+                    }
+                  }
+                },
+                "runnerNames": { "type": "array", "items": { "type": "string" } },
+                "reaperExitCode": { "type": "integer", "enum": [0, 10, 20] },
+                "sweeperReclaimedBytes": { "type": "integer", "minimum": 0 },
+                "verdict": { "enum": ["pass", "fail"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+
+    "telemetry": {
+      "type": "boolean",
+      "const": false,
+      "description": "Runner Forge sends no telemetry. The key exists so the absence is explicit and auditable."
+    }
+  }
+}

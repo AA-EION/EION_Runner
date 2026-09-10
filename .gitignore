@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Runner Forge .gitignore
+#
+# Nothing generated, downloaded, or secret belongs in this repository.
+# ---------------------------------------------------------------------------
+
+# --- Secrets and local configuration (never commit; see docs/ARCHITECTURE.md) --
+forge.json
+*.p12
+*.pem
+*.key
+*.pfx
+.env
+compose/.env
+!compose/.env.example
+
+# --- Build output -----------------------------------------------------------
+build/
+out/
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+.swiftpm/
+.build/
+DerivedData/
+canary/build/
+canary/installer/windows/Output/
+
+# --- Runner Forge runtime artefacts -----------------------------------------
+work/
+proof/
+state.json
+logs/
+*.log
+
+# --- Downloaded toolchains / caches -----------------------------------------
+.cache/
+ccache/
+sccache/
+fetchcontent/
+packer_cache/
+*.tar.gz
+*.zip
+*.dmg
+*.pkg
+*.exe
+*.msi
+!canary/installer/**/*.iss
+
+# --- OS noise ---------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini

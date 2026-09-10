@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "github": {
+    "owner": "AA-EION",
+    "repos": ["RecRoll", "runner-forge-canary"],
+    "appId": "1234567",
+    "installationId": "87654321"
+  },
+  "runners": [
+    {
+      "classId": "win-build",
+      "enabled": true,
+      "replicas": 2,
+      "labels": ["self-hosted", "windows", "x64", "container", "forge"],
+      "jobTimeoutMinutes": 60
+    },
+    {
+      "classId": "linux-util",
+      "enabled": true,
+      "replicas": 1,
+      "labels": ["self-hosted", "linux", "x64", "container", "forge"],
+      "jobTimeoutMinutes": 60
+    },
+    {
+      "classId": "mac-build",
+      "enabled": true,
+      "replicas": 1,
+      "labels": ["self-hosted", "macos", "arm64", "tart", "forge"],
+      "jobTimeoutMinutes": 90
+    },
+    {
+      "classId": "win-ilok",
+      "enabled": true,
+      "replicas": 1,
+      "labels": ["self-hosted", "windows", "x64", "ilok", "forge"],
+      "jobTimeoutMinutes": 30
+    },
+    {
+      "classId": "mac-ilok",
+      "enabled": false,
+      "replicas": 1,
+      "labels": ["self-hosted", "macos", "arm64", "ilok", "forge"],
+      "jobTimeoutMinutes": 30
+    }
+  ],
+  "signing": {
+    "mode": "windows-ilok",
+    "paceAccount": "example-pace-account",
+    "paceWcGuid": "00000000-0000-0000-0000-000000000000",
+    "paceSignId": "example-sign-id",
+    "allowSigningService": true,
+    "windows": {
+      "provider": "azure-trusted-signing",
+      "azureEndpoint": "https://eus.codesigning.azure.net",
+      "azureAccount": "example-signing-account",
+      "azureProfile": "example-signing-profile"
+    },
+    "macos": {
+      "teamId": "ABCDE12345",
+      "devIdAppIdentity": "Developer ID Application: Example Ltd (ABCDE12345)",
+      "devIdInstallerIdentity": "Developer ID Installer: Example Ltd (ABCDE12345)",
+      "notarize": true
+    }
+  },
+  "paths": {
+    "workDir": "C:\\ProgramData\\RunnerForge\\work",
+    "aaxSdkSource": ""
+  },
+  "retention": {
+    "keepBaseImages": true,
+    "keepTartImages": true,
+    "keepCaches": true,
+    "purgeOnExit": true,
+    "logRetentionDays": 7
+  },
+  "limits": {
+    "maxDiskGb": 120
+  },
+  "verification": {
+    "canaryRepo": "AA-EION/runner-forge-canary",
+    "requiredGreenRuns": 3,
+    "lastProof": null
+  },
+  "telemetry": false
+}

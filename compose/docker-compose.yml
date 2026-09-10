@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# Runner Forge — container runner classes.
+#
+# NO SECRET APPEARS IN THIS FILE, and none ever should. Compose files get
+# committed, copied and pasted into issues. Credentials reach a container only
+# through `env_file`, pointing at a RAM-backed path that the supervisor
+# overwrites with random bytes and deletes the moment the container reports
+# started.
+#
+# NO VERSION APPEARS IN THIS FILE EITHER. Image tags come from .env, which the
+# GUI renders from versions.toml. See .env.example.
+#
+# The GUI does not normally use this file — RunnerSupervisor starts containers
+# individually so it can hand each one its own single-use JIT config. This file
+# exists for the by-hand path: bringing a class up from a terminal to debug it.
+# ---------------------------------------------------------------------------
+
+name: runnerforge
+
+services:
+  win-build:
+    # Windows container, Hyper-V isolated. Requires Docker Desktop in Windows
+    # containers mode on Windows 11 Pro/Enterprise. It will not start on a Linux
+    # daemon, which is correct rather than a bug.
+    image: runnerforge/win-build:${WIN_BUILD_TAG:?WIN_BUILD_TAG must be set from versions.toml}
+    isolation: hyperv
+    restart: always
+    # stdin is how the JIT config arrives. Without this the entrypoint has no
+    # stdin to read and refuses to start, which is the intended failure.
+    stdin_open: true
+    env_file:
+      - ${WIN_BUILD_ENV_FILE:?path to the RAM-backed env file}
+    volumes:
+      - forge-fetchcontent:C:\cache\fetchcontent
+      - forge-sccache:C:\cache\sccache
+      # The AAX SDK is mounted, never baked into a layer. Read-only: a build
+      # has no business modifying a vendor SDK.
+      - forge-aax-sdk:C:\sdk\aax:ro
+    deploy:
+      replicas: ${WIN_BUILD_REPLICAS:-2}
+      resources:
+        limits:
+          cpus: "${WIN_BUILD_CPUS:-4}"
+          memory: ${WIN_BUILD_MEMORY:-8g}
+    logging:
+      driver: json-file
+      options:
+        # Capped so a runaway build cannot fill the disk with its own logs.
+        max-size: "20m"
+        max-file: "3"
+
+  linux-util:
+    image: runnerforge/linux-util:${LINUX_UTIL_TAG:?LINUX_UTIL_TAG must be set from versions.toml}
+    restart: always
+    stdin_open: true
+    env_file:
+      - ${LINUX_UTIL_ENV_FILE:?path to the RAM-backed env file}
+    volumes:
+      - forge-fetchcontent:/cache/fetchcontent
+      - forge-ccache:/cache/ccache
+      - forge-aax-sdk:/sdk/aax:ro
+    deploy:
+      replicas: ${LINUX_UTIL_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: "${LINUX_UTIL_CPUS:-4}"
+          memory: ${LINUX_UTIL_MEMORY:-8g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+# These four are the KEEP list. The Sweeper never removes them; removing them is
+# exactly what makes the next build slow.
+volumes:
+  forge-fetchcontent:
+    external: true
+  forge-sccache:
+    external: true
+  forge-ccache:
+    external: true
+  forge-aax-sdk:
+    external: true

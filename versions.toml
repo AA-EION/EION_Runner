@@ -20,13 +20,8 @@ actions_runner = "2.328.0"
 [windows_image]
 base = "mcr.microsoft.com/windows/servercore:ltsc2022"
 vs_buildtools = "17.12"
-vs_components = [
-  "Microsoft.VisualStudio.Workload.VCTools",
-  "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-  "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
-  "Microsoft.VisualStudio.Component.Windows11SDK.22621",
-  "Microsoft.VisualStudio.Component.VC.CMake.Project",
-]
+# vs_components moved to [toolchain.windows] — see the note there on why the
+# image contents are declarative.
 cmake = "3.31.5"
 ninja = "1.12.1"
 git = "2.47.1"
@@ -148,3 +143,111 @@ python_win_x64       = "https://www.python.org/ftp/python/{v}/python-{v}-amd64.e
 # and therefore no checksum entry for it.
 vs_buildtools_bootstrap = "https://aka.ms/vs/17/release/vs_buildtools.exe"
 vs_buildtools_channel   = "https://aka.ms/vs/17/release.ltsc.{v}/channel"
+
+# ---------------------------------------------------------------------------
+# [toolchain] — WHAT GOES INTO THE IMAGES, declaratively.
+#
+# This section exists so that Runner Forge is a RUNNER product, not an
+# audio-plugin product. The Dockerfiles and the provisioner contain no tool
+# names and no package names: they install whatever these lists say. Point them
+# at a different set and the same images serve a Rust project, a Go project, or
+# anything else.
+#
+# The split between `apt_base` and `apt_workload` is the whole point:
+#
+#   apt_base      generic build-runner needs. Anything that builds C/C++ wants
+#                 these. Do not remove them.
+#   apt_workload  what THIS first consumer (a JUCE audio plugin) additionally
+#                 needs. Replace this list wholesale for a different workload;
+#                 nothing else has to change.
+#
+# `tools` names entries in [urls]/[checksums] above. Each is installed by the
+# generic installer, which verifies the recorded SHA-256 and refuses to run
+# without one.
+#
+# WHY BAKE THEM IN AT ALL, rather than apt-get in the CI script? Two reasons,
+# and they are the only two:
+#   1. A job that downloads its own toolchain fails the day the download does.
+#   2. Installing MSVC per job costs ~20 minutes per build.
+# If neither matters to you, empty apt_workload and let your workflow install
+# what it needs at job time. That is a supported configuration, not a hack.
+# ---------------------------------------------------------------------------
+
+[toolchain.linux]
+apt_base = [
+  "build-essential",
+  "pkg-config",
+  "git",
+  "ca-certificates",
+  "curl",
+  "jq",
+  "zip",
+  "unzip",
+  "tar",
+  "ccache",
+  "libicu74",
+  "liblttng-ust1",
+  "libssl3",
+]
+# JUCE/audio-plugin specific. Swap this list to retarget the image.
+apt_workload = [
+  "libasound2-dev",
+  "libjack-jackd2-dev",
+  "libfreetype6-dev",
+  "libfontconfig1-dev",
+  "libx11-dev",
+  "libxcomposite-dev",
+  "libxcursor-dev",
+  "libxext-dev",
+  "libxinerama-dev",
+  "libxrandr-dev",
+  "libxrender-dev",
+  "libglu1-mesa-dev",
+  "mesa-common-dev",
+]
+# Pinned downloads to install, by [urls]/[checksums] key. Each entry is
+# "<key>:<install-kind>:<destination>".
+#   tar-strip1  extract a .tar.gz, stripping the top-level directory
+#   zip-flat    unzip into the destination
+#   tar-flat    extract a .tar.gz into the destination as-is
+# Every destination and every <destination>/bin is added to PATH.
+tools = [
+  "cmake_linux_x86_64:tar-strip1:/opt/cmake",
+  "ninja_linux:zip-flat:/opt/ninja",
+]
+# Installed separately because it is not a build tool and is not on PATH.
+runner_tool = "runner_linux_x64:tar-flat"
+
+[toolchain.windows]
+# Visual Studio components, installed by the pinned 17.12 channel.
+# VC.Tools.ARM64 is what makes Windows ARM64 output a CROSS-COMPILE.
+vs_components = [
+  "Microsoft.VisualStudio.Workload.VCTools",
+  "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+  "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+  "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+  "Microsoft.VisualStudio.Component.VC.CMake.Project",
+]
+# Generic build tooling.
+tools_base = [
+  "sevenzip_win_x64:exe-silent:C:\\tools\\7zip",
+  "cmake_windows_x86_64:zip-strip1:C:\\tools\\cmake",
+  "ninja_win:zip-flat:C:\\tools\\ninja",
+  "git_win_x64:zip-flat:C:\\tools\\git",
+  "python_win_x64:exe-python:C:\\tools\\python",
+  "sccache_win_x64:targz-find:C:\\tools\\sccache",
+]
+# Workload specific: Inno Setup builds the plugin's Windows installer. Remove it
+# for a workload that does not ship a Windows installer.
+tools_workload = [
+  "innosetup_win:exe-inno:C:\\tools\\innosetup",
+]
+runner_tool = "runner_win_x64:zip-flat"
+
+[toolchain.macos]
+brew_packages = ["ccache"]
+tools = [
+  "cmake_macos_universal:tar-strip1:/opt/cmake",
+  "ninja_mac:zip-flat:/opt/ninja",
+]
+runner_tool = "runner_osx_arm64:tar-flat"

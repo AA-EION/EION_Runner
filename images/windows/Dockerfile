@@ -12,9 +12,11 @@
 # it cannot run, and preflight blocks with an explanation rather than letting the
 # user discover it three failed builds later.
 #
-# NO VERSION OR URL IS HARDCODED HERE. Everything arrives as a build argument
-# read from versions.toml, and no ARG has a default, so a build that omits one
-# fails immediately rather than silently installing something unpinned.
+# THIS DOCKERFILE NAMES NO TOOL AND NO VERSION. It installs whatever the
+# [toolchain.windows] section of versions.toml declares, so the same image
+# definition serves an audio plugin, a Rust project, or anything else. No ARG has
+# a default, so a build that omits one fails immediately rather than silently
+# installing something unpinned.
 #
 # THE AAX SDK IS NEVER COPIED IN. It is proprietary and cannot live in an image
 # layer. It is mounted at C:\sdk\aax from a local named volume at run time.
@@ -29,26 +31,21 @@ FROM ${BASE_IMAGE}
 ARG VS_BUILDTOOLS_BOOTSTRAP_URL
 ARG VS_BUILDTOOLS_CHANNEL_URL
 ARG VS_COMPONENTS
-ARG CMAKE_URL
-ARG CMAKE_SHA256
-ARG NINJA_URL
-ARG NINJA_SHA256
-ARG GIT_URL
-ARG GIT_SHA256
-ARG INNOSETUP_URL
-ARG INNOSETUP_SHA256
-ARG SEVENZIP_URL
-ARG SEVENZIP_SHA256
-ARG SCCACHE_URL
-ARG SCCACHE_SHA256
-ARG PYTHON_URL
-ARG PYTHON_SHA256
-ARG RUNNER_URL
-ARG RUNNER_SHA256
+
+# Newline-separated install manifest, one entry per line:
+#     <name>|<url>|<sha256>|<kind>|<destination>
+# The caller builds it from [toolchain.windows] in versions.toml. THIS FILE NAMES
+# NO TOOL, so retargeting the runner means editing a list, not this Dockerfile.
+ARG TOOL_MANIFEST
+
+# Same format, single entry, for the Actions runner. Separate because it is not a
+# build tool and is not placed on PATH.
+ARG RUNNER_MANIFEST
+
 ARG IMAGE_TAG
 
 LABEL org.opencontainers.image.title="runnerforge/win-build" `
-      org.opencontainers.image.description="Runner Forge ephemeral Windows runner: MSVC x64 + ARM64 cross toolset, CMake, Ninja, Inno Setup" `
+      org.opencontainers.image.description="Runner Forge ephemeral Windows runner. Toolchain contents are declared in versions.toml, not baked into this file." `
       org.opencontainers.image.version="${IMAGE_TAG}" `
       org.opencontainers.image.licenses="MIT" `
       dev.runnerforge.class="win-build"
@@ -57,6 +54,11 @@ LABEL org.opencontainers.image.title="runnerforge/win-build" `
 # a failed download leaves a half-built image that appears to succeed.
 SHELL ["powershell", "-Command", "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
 
+# These name CACHE DIRECTORIES, not tools. They are the KEEP volumes the Sweeper
+# protects. SCCACHE_DIR and FETCHCONTENT_BASE_DIR are the env-var contracts their
+# respective tools read; setting them costs nothing when those tools are not part
+# of the declared toolchain, and it means the volume mount points are stable
+# regardless of what the toolchain list contains.
 ENV RUNNER_HOME="C:\actions-runner" `
     FETCHCONTENT_BASE_DIR="C:\cache\fetchcontent" `
     SCCACHE_DIR="C:\cache\sccache" `
@@ -67,19 +69,13 @@ COPY install-buildtools.ps1 C:/install/install-buildtools.ps1
 # One layer for the whole toolchain. Splitting it would not help: the Visual
 # Studio installer is by far the largest step and never cache-hits anyway.
 RUN C:\install\install-buildtools.ps1 `
-      -VsBootstrapUrl   $env:VS_BUILDTOOLS_BOOTSTRAP_URL `
-      -VsChannelUrl     $env:VS_BUILDTOOLS_CHANNEL_URL `
-      -VsComponents     $env:VS_COMPONENTS `
-      -CMakeUrl         $env:CMAKE_URL      -CMakeSha256     $env:CMAKE_SHA256 `
-      -NinjaUrl         $env:NINJA_URL      -NinjaSha256     $env:NINJA_SHA256 `
-      -GitUrl           $env:GIT_URL        -GitSha256       $env:GIT_SHA256 `
-      -InnoSetupUrl     $env:INNOSETUP_URL  -InnoSetupSha256 $env:INNOSETUP_SHA256 `
-      -SevenZipUrl      $env:SEVENZIP_URL   -SevenZipSha256  $env:SEVENZIP_SHA256 `
-      -SccacheUrl       $env:SCCACHE_URL    -SccacheSha256   $env:SCCACHE_SHA256 `
-      -PythonUrl        $env:PYTHON_URL     -PythonSha256    $env:PYTHON_SHA256 `
-      -RunnerUrl        $env:RUNNER_URL     -RunnerSha256    $env:RUNNER_SHA256 `
-      -RunnerHome       $env:RUNNER_HOME `
-      -ToolsDir         $env:TOOLS_DIR; `
+      -VsBootstrapUrl  $env:VS_BUILDTOOLS_BOOTSTRAP_URL `
+      -VsChannelUrl    $env:VS_BUILDTOOLS_CHANNEL_URL `
+      -VsComponents    $env:VS_COMPONENTS `
+      -ToolManifest    $env:TOOL_MANIFEST `
+      -RunnerManifest  $env:RUNNER_MANIFEST `
+      -RunnerHome      $env:RUNNER_HOME `
+      -ToolsDir        $env:TOOLS_DIR; `
     Remove-Item -Recurse -Force C:\install
 
 # --- caches -----------------------------------------------------------------

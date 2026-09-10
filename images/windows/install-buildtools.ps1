@@ -1,14 +1,21 @@
 <#
 .SYNOPSIS
-    Installs the win-build toolchain into the image.
+    Installs the declared toolchain into the win-build image.
 
 .DESCRIPTION
-    Every tool this script installs is pinned in versions.toml and reaches this
-    script as a URL plus a SHA-256. There is no default for any of them: a
-    missing argument is a hard error, never a fall back to "latest".
+    THIS SCRIPT NAMES NO TOOL. It installs whatever [toolchain.windows] in
+    versions.toml tells it to, so the same image definition serves an audio
+    plugin, a Rust project, or anything else. Retarget the runner by editing a
+    list, not this file.
 
-    Verification is not optional and there is no flag to skip it. If a checksum
-    does not match, the build stops and the image is not produced.
+    Everything arrives as a manifest of lines:
+
+        <name>|<url>|<sha256>|<kind>|<destination>
+
+    Verification is not optional and there is no flag to skip it. A missing
+    checksum is a hard error, not a reason to proceed: an unverified toolchain is
+    worse than a failed build, because it is a failed build you do not find out
+    about.
 
     The Avid AAX SDK is deliberately absent. It is proprietary, it cannot live in
     an image layer, and it is mounted from a local named volume at run time.
@@ -23,24 +30,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $VsBootstrapUrl,
     [Parameter(Mandatory = $true)] [string] $VsChannelUrl,
     [Parameter(Mandatory = $true)] [string] $VsComponents,
-
-    [Parameter(Mandatory = $true)] [string] $CMakeUrl,
-    [Parameter(Mandatory = $true)] [string] $CMakeSha256,
-    [Parameter(Mandatory = $true)] [string] $NinjaUrl,
-    [Parameter(Mandatory = $true)] [string] $NinjaSha256,
-    [Parameter(Mandatory = $true)] [string] $GitUrl,
-    [Parameter(Mandatory = $true)] [string] $GitSha256,
-    [Parameter(Mandatory = $true)] [string] $InnoSetupUrl,
-    [Parameter(Mandatory = $true)] [string] $InnoSetupSha256,
-    [Parameter(Mandatory = $true)] [string] $SevenZipUrl,
-    [Parameter(Mandatory = $true)] [string] $SevenZipSha256,
-    [Parameter(Mandatory = $true)] [string] $SccacheUrl,
-    [Parameter(Mandatory = $true)] [string] $SccacheSha256,
-    [Parameter(Mandatory = $true)] [string] $PythonUrl,
-    [Parameter(Mandatory = $true)] [string] $PythonSha256,
-    [Parameter(Mandatory = $true)] [string] $RunnerUrl,
-    [Parameter(Mandatory = $true)] [string] $RunnerSha256,
-
+    [Parameter(Mandatory = $true)] [string] $ToolManifest,
+    [Parameter(Mandatory = $true)] [string] $RunnerManifest,
     [Parameter(Mandatory = $true)] [string] $RunnerHome,
     [Parameter(Mandatory = $true)] [string] $ToolsDir
 )
@@ -55,10 +46,7 @@ New-Item -ItemType Directory -Force -Path $downloadDir, $ToolsDir | Out-Null
 
 <#
     Downloads a file and verifies its SHA-256 before anyone is allowed to use it.
-
-    A checksum that is empty is treated as a HARD ERROR rather than "skip
-    verification". An unverified toolchain is worse than a failed build: it is a
-    failed build you do not find out about.
+    An empty checksum is a HARD ERROR rather than "skip verification".
 #>
 function Get-VerifiedFile {
     param(
@@ -84,7 +72,7 @@ function Get-VerifiedFile {
         throw "FAILED TO DOWNLOAD $Name`n  URL: $Url`n  $($_.Exception.Message)`nThe pinned artifact is unavailable. Update versions.toml deliberately; do not fall back to an unpinned version."
     }
 
-    $actual = (Get-FileHash -Path $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual   = (Get-FileHash -Path $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
     $expected = $ExpectedSha256.ToLowerInvariant()
 
     if ($actual -ne $expected) {
@@ -96,7 +84,7 @@ function Get-VerifiedFile {
 
 function Add-ToMachinePath {
     param([Parameter(Mandatory = $true)] [string] $Directory)
-
+    if (-not (Test-Path $Directory)) { return }
     $current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     if ($current -notlike "*$Directory*") {
         [Environment]::SetEnvironmentVariable('Path', "$current;$Directory", 'Machine')
@@ -110,11 +98,10 @@ function Add-ToMachinePath {
 #
 # Microsoft ships only an evergreen bootstrapper, so there is no per-version .exe
 # URL and therefore no checksum to record. The VERSION is pinned instead by
-# passing --channelUri for the specific release channel, which is Microsoft's
+# passing --channelUri for a specific release channel, which is Microsoft's
 # documented mechanism for installing a fixed version.
 #
-# The ARM64 toolset is what makes the Windows ARM64 output a CROSS-COMPILE rather
-# than emulation: an amd64 container hosting the ARM64 compiler.
+# Which components get installed is declared in versions.toml, not here.
 # ---------------------------------------------------------------------------
 Write-Step 'installing Visual Studio Build Tools'
 Write-Host "    channel: $VsChannelUrl"
@@ -124,14 +111,11 @@ Invoke-WebRequest -Uri $VsBootstrapUrl -OutFile $bootstrapper -UseBasicParsing
 
 $componentList = $VsComponents -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 if ($componentList.Count -eq 0) {
-    throw 'No Visual Studio components were supplied. versions.toml must list them.'
+    throw 'No Visual Studio components were supplied. [toolchain.windows].vs_components must list them.'
 }
 
-$vsArgs = @(
-    '--quiet', '--wait', '--norestart', '--nocache',
-    '--channelUri', $VsChannelUrl,
-    '--installPath', 'C:\BuildTools'
-)
+$vsArgs = @('--quiet', '--wait', '--norestart', '--nocache',
+            '--channelUri', $VsChannelUrl, '--installPath', 'C:\BuildTools')
 foreach ($component in $componentList) {
     Write-Host "    component: $component"
     $vsArgs += @('--add', $component)
@@ -142,111 +126,129 @@ $process = Start-Process -FilePath $bootstrapper -ArgumentList $vsArgs -Wait -Pa
 # 3010 means "installed, reboot required". A container is never rebooted and the
 # toolchain is usable, so it is a success for our purposes.
 if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
-    throw "Visual Studio Build Tools installation failed with exit code $($process.ExitCode). See C:\\ProgramData\\Microsoft\\VisualStudio\\Packages\\_Instances for logs."
+    throw "Visual Studio Build Tools installation failed with exit code $($process.ExitCode). See C:\ProgramData\Microsoft\VisualStudio\Packages\_Instances for logs."
 }
 Write-Host "    installer exit code $($process.ExitCode)"
 
-# Prove the ARM64 cross toolset really landed. Without this check a missing
-# component only surfaces much later, as a confusing CMake failure in CI.
-$hostX64 = Get-ChildItem -Path 'C:\BuildTools\VC\Tools\MSVC' -Directory | Select-Object -First 1
-if (-not $hostX64) { throw 'No MSVC toolset directory found under C:\BuildTools\VC\Tools\MSVC.' }
-
-foreach ($target in @('x64', 'arm64')) {
-    $toolPath = Join-Path $hostX64.FullName "bin\Hostx64\$target\cl.exe"
-    if (-not (Test-Path $toolPath)) {
-        throw "The $target compiler is missing at $toolPath. Windows ARM64 output is cross-compiled and cannot be produced without the ARM64 toolset."
+# If an ARM64 toolset was requested, prove it actually landed. A missing
+# component otherwise surfaces much later as a confusing CMake failure in CI.
+$msvcRoot = Get-ChildItem -Path 'C:\BuildTools\VC\Tools\MSVC' -Directory -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+if ($msvcRoot) {
+    foreach ($target in @('x64', 'arm64')) {
+        $requested = $componentList -match "VC\.Tools\.$([regex]::Escape($target))" -or $target -eq 'x64'
+        $toolPath = Join-Path $msvcRoot.FullName "bin\Hostx64\$target\cl.exe"
+        if (Test-Path $toolPath) {
+            Write-Host "    found $target compiler: $toolPath"
+        }
+        elseif ($requested) {
+            throw "The $target compiler is missing at $toolPath, but a toolset for it was requested. Windows ARM64 output is cross-compiled and cannot be produced without it."
+        }
     }
-    Write-Host "    found $target compiler: $toolPath"
 }
 
 # ---------------------------------------------------------------------------
-# 7-Zip first: it extracts several of the archives below.
-# ---------------------------------------------------------------------------
-$sevenZipExe = Join-Path $downloadDir '7z-setup.exe'
-Get-VerifiedFile -Url $SevenZipUrl -ExpectedSha256 $SevenZipSha256 -Destination $sevenZipExe -Name '7-Zip'
-Start-Process -FilePath $sevenZipExe -ArgumentList @('/S', "/D=$ToolsDir\7zip") -Wait -NoNewWindow
-$sevenZip = Join-Path $ToolsDir '7zip\7z.exe'
-if (-not (Test-Path $sevenZip)) { throw "7-Zip did not install to $sevenZip." }
-Add-ToMachinePath -Directory (Join-Path $ToolsDir '7zip')
-
-# ---------------------------------------------------------------------------
-# CMake
-# ---------------------------------------------------------------------------
-$cmakeZip = Join-Path $downloadDir 'cmake.zip'
-Get-VerifiedFile -Url $CMakeUrl -ExpectedSha256 $CMakeSha256 -Destination $cmakeZip -Name 'CMake'
-Expand-Archive -Path $cmakeZip -DestinationPath "$ToolsDir\cmake-extract" -Force
-$cmakeRoot = Get-ChildItem -Path "$ToolsDir\cmake-extract" -Directory | Select-Object -First 1
-Move-Item -Path $cmakeRoot.FullName -Destination "$ToolsDir\cmake"
-Remove-Item -Recurse -Force "$ToolsDir\cmake-extract"
-Add-ToMachinePath -Directory "$ToolsDir\cmake\bin"
-
-# ---------------------------------------------------------------------------
-# Ninja
-# ---------------------------------------------------------------------------
-$ninjaZip = Join-Path $downloadDir 'ninja.zip'
-Get-VerifiedFile -Url $NinjaUrl -ExpectedSha256 $NinjaSha256 -Destination $ninjaZip -Name 'Ninja'
-Expand-Archive -Path $ninjaZip -DestinationPath "$ToolsDir\ninja" -Force
-Add-ToMachinePath -Directory "$ToolsDir\ninja"
-
-# ---------------------------------------------------------------------------
-# Git (MinGit: the portable build, which is what a container wants)
-# ---------------------------------------------------------------------------
-$gitZip = Join-Path $downloadDir 'mingit.zip'
-Get-VerifiedFile -Url $GitUrl -ExpectedSha256 $GitSha256 -Destination $gitZip -Name 'Git'
-Expand-Archive -Path $gitZip -DestinationPath "$ToolsDir\git" -Force
-Add-ToMachinePath -Directory "$ToolsDir\git\cmd"
-
-# ---------------------------------------------------------------------------
-# Inno Setup — compiles the Windows installer.
+# The declared toolchain. One generic loop; adding a tool means adding a line to
+# versions.toml, never editing this script.
 #
-# It is installed HERE, into the image, because the build workflow must never
-# install it at run time. A job that downloads its own toolchain is a job that
-# fails the day the download does.
+# Install kinds:
+#   zip-flat     unzip into the destination
+#   zip-strip1   unzip, then hoist the single top-level directory
+#   targz-find   extract a .tar.gz (via 7-Zip) and hoist the named executable
+#   exe-silent   run an NSIS-style installer with /S /D=<dest>
+#   exe-inno     run an Inno Setup installer with /VERYSILENT /DIR=<dest>
+#   exe-python   run the python.org installer with TargetDir=<dest>
 # ---------------------------------------------------------------------------
-$innoExe = Join-Path $downloadDir 'innosetup.exe'
-Get-VerifiedFile -Url $InnoSetupUrl -ExpectedSha256 $InnoSetupSha256 -Destination $innoExe -Name 'Inno Setup'
-Start-Process -FilePath $innoExe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$ToolsDir\innosetup") -Wait -NoNewWindow
-$iscc = Join-Path $ToolsDir 'innosetup\ISCC.exe'
-if (-not (Test-Path $iscc)) { throw "Inno Setup did not install to $iscc." }
-Add-ToMachinePath -Directory "$ToolsDir\innosetup"
+$sevenZip = $null
+
+function Install-Tool {
+    param([string] $Name, [string] $Url, [string] $Sha, [string] $Kind, [string] $Dest)
+
+    $extension = if ($Kind -like 'exe-*') { '.exe' } elseif ($Kind -like 'targz*') { '.tar.gz' } else { '.zip' }
+    $archive = Join-Path $downloadDir ("$Name$extension")
+
+    Get-VerifiedFile -Url $Url -ExpectedSha256 $Sha -Destination $archive -Name $Name
+
+    switch ($Kind) {
+        'zip-flat' {
+            Expand-Archive -Path $archive -DestinationPath $Dest -Force
+        }
+        'zip-strip1' {
+            $staging = "$Dest-extract"
+            Expand-Archive -Path $archive -DestinationPath $staging -Force
+            $inner = Get-ChildItem -Path $staging -Directory | Select-Object -First 1
+            if (-not $inner) { throw "$Name archive had no top-level directory to strip." }
+            Move-Item -Path $inner.FullName -Destination $Dest
+            Remove-Item -Recurse -Force $staging
+        }
+        'targz-find' {
+            if (-not $script:sevenZip) { throw "$Name needs 7-Zip, which must be listed before it in tools_base." }
+            $staging = "$Dest-extract"
+            New-Item -ItemType Directory -Force -Path $staging | Out-Null
+            & $script:sevenZip x $archive "-o$staging" -y | Out-Null
+            $innerTar = Get-ChildItem -Path $staging -Filter '*.tar' | Select-Object -First 1
+            if (-not $innerTar) { throw "$Name archive did not contain the expected .tar." }
+            & $script:sevenZip x $innerTar.FullName "-o$staging" -y | Out-Null
+            $binary = Get-ChildItem -Path $staging -Recurse -Filter "$($Name.Split('_')[0]).exe" | Select-Object -First 1
+            if (-not $binary) { $binary = Get-ChildItem -Path $staging -Recurse -Filter '*.exe' | Select-Object -First 1 }
+            if (-not $binary) { throw "${Name}: no executable found in the extracted archive." }
+            New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+            Move-Item -Path $binary.FullName -Destination (Join-Path $Dest $binary.Name)
+            Remove-Item -Recurse -Force $staging
+        }
+        'exe-silent' {
+            Start-Process -FilePath $archive -ArgumentList @('/S', "/D=$Dest") -Wait -NoNewWindow
+        }
+        'exe-inno' {
+            Start-Process -FilePath $archive -ArgumentList @(
+                '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$Dest") -Wait -NoNewWindow
+        }
+        'exe-python' {
+            Start-Process -FilePath $archive -ArgumentList @(
+                '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0', 'Include_doc=0',
+                "TargetDir=$Dest") -Wait -NoNewWindow
+        }
+        default { throw "unknown install kind '$Kind' for $Name" }
+    }
+
+    if (-not (Test-Path $Dest)) { throw "$Name did not install to $Dest." }
+
+    # Both layouts are covered without naming any tool: some ship bin/, some are
+    # a bare directory of executables.
+    Add-ToMachinePath -Directory $Dest
+    Add-ToMachinePath -Directory (Join-Path $Dest 'bin')
+    Add-ToMachinePath -Directory (Join-Path $Dest 'cmd')
+
+    Remove-Item -Force $archive -ErrorAction SilentlyContinue
+    Write-Host "    installed to $Dest"
+}
+
+foreach ($line in ($ToolManifest -split "`n")) {
+    $entry = $line.Trim()
+    if (-not $entry) { continue }
+    $parts = $entry -split '\|'
+    if ($parts.Count -lt 5) { throw "malformed toolchain manifest entry: $entry" }
+
+    Install-Tool -Name $parts[0] -Url $parts[1] -Sha $parts[2] -Kind $parts[3] -Dest $parts[4]
+
+    # 7-Zip, once installed, is what later archive kinds use. Discovered by
+    # looking for the binary rather than by hardcoding the tool's name.
+    if (-not $script:sevenZip) {
+        $candidate = Join-Path $parts[4] '7z.exe'
+        if (Test-Path $candidate) { $script:sevenZip = $candidate }
+    }
+}
 
 # ---------------------------------------------------------------------------
-# Python — several build helper scripts assume it exists.
+# The Actions runner. Separate because it is not a build tool and is not on PATH.
 # ---------------------------------------------------------------------------
-$pythonExe = Join-Path $downloadDir 'python-installer.exe'
-Get-VerifiedFile -Url $PythonUrl -ExpectedSha256 $PythonSha256 -Destination $pythonExe -Name 'Python'
-Start-Process -FilePath $pythonExe -ArgumentList @(
-    '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0', 'Include_doc=0',
-    "TargetDir=$ToolsDir\python"
-) -Wait -NoNewWindow
-if (-not (Test-Path "$ToolsDir\python\python.exe")) { throw "Python did not install to $ToolsDir\python." }
-Add-ToMachinePath -Directory "$ToolsDir\python"
+$runnerParts = ($RunnerManifest.Trim() -split '\|')
+if ($runnerParts.Count -lt 4) { throw "malformed runner manifest: $RunnerManifest" }
 
-# ---------------------------------------------------------------------------
-# sccache — the compiler cache. Paired with the forge-sccache volume, this is
-# what makes the second build of the same plugin fast.
-# ---------------------------------------------------------------------------
-$sccacheArchive = Join-Path $downloadDir 'sccache.tar.gz'
-Get-VerifiedFile -Url $SccacheUrl -ExpectedSha256 $SccacheSha256 -Destination $sccacheArchive -Name 'sccache'
-New-Item -ItemType Directory -Force -Path "$ToolsDir\sccache-extract" | Out-Null
-& $sevenZip x $sccacheArchive "-o$ToolsDir\sccache-extract" -y | Out-Null
-$innerTar = Get-ChildItem -Path "$ToolsDir\sccache-extract" -Filter '*.tar' | Select-Object -First 1
-if (-not $innerTar) { throw 'sccache archive did not contain the expected .tar.' }
-& $sevenZip x $innerTar.FullName "-o$ToolsDir\sccache-extract" -y | Out-Null
-$sccacheBinary = Get-ChildItem -Path "$ToolsDir\sccache-extract" -Recurse -Filter 'sccache.exe' | Select-Object -First 1
-if (-not $sccacheBinary) { throw 'sccache.exe not found in the extracted archive.' }
-New-Item -ItemType Directory -Force -Path "$ToolsDir\sccache" | Out-Null
-Move-Item -Path $sccacheBinary.FullName -Destination "$ToolsDir\sccache\sccache.exe"
-Remove-Item -Recurse -Force "$ToolsDir\sccache-extract"
-Add-ToMachinePath -Directory "$ToolsDir\sccache"
-
-# ---------------------------------------------------------------------------
-# The Actions runner.
-# ---------------------------------------------------------------------------
-$runnerZip = Join-Path $downloadDir 'actions-runner.zip'
-Get-VerifiedFile -Url $RunnerUrl -ExpectedSha256 $RunnerSha256 -Destination $runnerZip -Name 'Actions runner'
+$runnerArchive = Join-Path $downloadDir 'actions-runner.zip'
+Get-VerifiedFile -Url $runnerParts[1] -ExpectedSha256 $runnerParts[2] -Destination $runnerArchive -Name $runnerParts[0]
 New-Item -ItemType Directory -Force -Path $RunnerHome | Out-Null
-Expand-Archive -Path $runnerZip -DestinationPath $RunnerHome -Force
+Expand-Archive -Path $runnerArchive -DestinationPath $RunnerHome -Force
 if (-not (Test-Path (Join-Path $RunnerHome 'run.cmd'))) {
     throw "The Actions runner did not extract to $RunnerHome."
 }
@@ -257,13 +259,8 @@ if (-not (Test-Path (Join-Path $RunnerHome 'run.cmd'))) {
 # ---------------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path 'C:\cache\fetchcontent', 'C:\cache\sccache', 'C:\sdk\aax' | Out-Null
 
-Remove-Item -Recurse -Force $downloadDir
+Remove-Item -Recurse -Force $downloadDir -ErrorAction SilentlyContinue
 
 Write-Step 'toolchain installed'
-Write-Host "    cmake     : $(& "$ToolsDir\cmake\bin\cmake.exe" --version | Select-Object -First 1)"
-Write-Host "    ninja     : $(& "$ToolsDir\ninja\ninja.exe" --version)"
-Write-Host "    git       : $(& "$ToolsDir\git\cmd\git.exe" --version)"
-Write-Host "    python    : $(& "$ToolsDir\python\python.exe" --version)"
-Write-Host "    sccache   : $(& "$ToolsDir\sccache\sccache.exe" --version)"
-Write-Host "    inno setup: $iscc"
-Write-Host "    runner    : $RunnerHome"
+Get-ChildItem -Path $ToolsDir -Directory | ForEach-Object { Write-Host "    $($_.Name) -> $($_.FullName)" }
+Write-Host "    runner -> $RunnerHome"

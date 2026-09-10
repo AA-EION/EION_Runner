@@ -2,40 +2,46 @@
 # ---------------------------------------------------------------------------
 # Runner Forge — linux-util runner image.
 #
-# Responsibilities of this class: release assembly, artifact collection,
-# artifact verification, GitHub Release creation, and a Linux verification build
-# of the plugin.
+# THIS DOCKERFILE NAMES NO TOOL AND NO PACKAGE. It installs whatever the
+# [toolchain.linux] section of versions.toml tells it to, so the same image
+# definition serves an audio plugin, a Rust project, or anything else. Retarget
+# the runner by editing a list, not this file.
 #
-# NO VERSION OR URL IS HARDCODED HERE. Every one arrives as a build argument
-# read from versions.toml by the caller. None of the ARGs below has a default,
-# so a build that forgets one fails immediately and loudly rather than quietly
-# installing something unpinned.
+# Everything arrives as a build argument, and no ARG has a default, so a build
+# that forgets one fails immediately rather than quietly installing something
+# unpinned. Every download is verified against a recorded SHA-256; there is no
+# flag to skip verification.
 #
-# NO SECRET IS EVER PASSED TO THIS BUILD. Credentials reach a running container
-# through --env-file pointing at a RAM-backed path, never through --build-arg
-# (which is recorded in the image history) and never baked into a layer.
+# NO SECRET IS EVER PASSED TO THIS BUILD. --build-arg values are recorded in the
+# image history and readable by anyone who can pull the image. Credentials reach
+# a RUNNING container through --env-file on a RAM-backed path.
 # ---------------------------------------------------------------------------
 
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-ARG RUNNER_URL
-ARG RUNNER_SHA256
-ARG CMAKE_URL
-ARG CMAKE_SHA256
-ARG NINJA_URL
-ARG NINJA_SHA256
+# Space-separated apt packages. The caller concatenates apt_base and
+# apt_workload from versions.toml.
+ARG APT_PACKAGES
+
+# Newline-separated install manifest. One entry per line:
+#     <name>|<url>|<sha256>|<kind>|<destination>
+# kind is one of: tar-strip1, tar-flat, zip-flat.
+ARG TOOL_MANIFEST
+
+# Same format, single entry, for the Actions runner. Kept separate because it is
+# not a build tool and is not placed on PATH.
+ARG RUNNER_MANIFEST
+
 ARG IMAGE_TAG
 
 # Optional. PEM contents of an extra trusted CA, for networks that terminate and
-# re-sign TLS (corporate proxies, CI egress gateways). Empty by default, in which
-# case nothing is installed and only the system trust store is used. This is a
-# certificate, not a credential: it is public by nature, so unlike a secret it is
-# safe to pass as a build argument.
+# re-sign TLS. Empty by default. A certificate is public by nature, so unlike a
+# credential it is safe to pass as a build argument.
 ARG EXTRA_CA_PEM=""
 
 LABEL org.opencontainers.image.title="runnerforge/linux-util" \
-      org.opencontainers.image.description="Runner Forge ephemeral Linux runner: release assembly, artifact verification, Linux verification build" \
+      org.opencontainers.image.description="Runner Forge ephemeral Linux runner. Toolchain contents are declared in versions.toml, not baked into this file." \
       org.opencontainers.image.version="${IMAGE_TAG}" \
       org.opencontainers.image.licenses="MIT" \
       dev.runnerforge.class="linux-util"
@@ -50,40 +56,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # --- system packages --------------------------------------------------------
 # Package versions come from the digest-pinned base image; see versions.toml for
-# why individual .deb versions are not pinned here.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
-        git \
-        ca-certificates \
-        curl \
-        jq \
-        zip \
-        unzip \
-        tar \
-        ccache \
-        libicu74 \
-        liblttng-ust1 \
-        libssl3 \
-        libasound2-dev \
-        libjack-jackd2-dev \
-        libfreetype6-dev \
-        libfontconfig1-dev \
-        libx11-dev \
-        libxcomposite-dev \
-        libxcursor-dev \
-        libxext-dev \
-        libxinerama-dev \
-        libxrandr-dev \
-        libxrender-dev \
-        libglu1-mesa-dev \
-        mesa-common-dev && \
+# why individual .deb versions are not pinned.
+RUN set -euo pipefail; \
+    if [ -z "${APT_PACKAGES}" ]; then \
+        echo "APT_PACKAGES is empty. It must come from [toolchain.linux] in versions.toml." >&2; \
+        exit 2; \
+    fi; \
+    apt-get update; \
+    # Deliberately unquoted: APT_PACKAGES is a space-separated list.
+    apt-get install -y --no-install-recommends ${APT_PACKAGES}; \
     rm -rf /var/lib/apt/lists/*
 
 # --- optional extra CA ------------------------------------------------------
-# Must come after ca-certificates is installed and before anything is downloaded,
-# or the downloads below fail TLS verification on a re-signing network. Skipping
+# After ca-certificates is installed and before anything is downloaded, or the
+# downloads below fail TLS verification on a re-signing network. Skipping
 # verification is never an option, so the trust store is fixed instead.
 RUN set -euo pipefail; \
     if [ -n "${EXTRA_CA_PEM}" ]; then \
@@ -94,27 +80,54 @@ RUN set -euo pipefail; \
         echo "no extra CA supplied; using the system trust store only"; \
     fi
 
-# --- CMake ------------------------------------------------------------------
-# Every download is verified against the SHA-256 recorded in versions.toml. A
-# mismatch aborts the build; verification is never skipped.
+# --- the declared toolchain -------------------------------------------------
+# One generic loop over the manifest. Adding a tool means adding a line to
+# versions.toml, never editing this Dockerfile.
 RUN set -euo pipefail; \
-    curl -fsSL "${CMAKE_URL}" -o /tmp/cmake.tar.gz; \
-    echo "${CMAKE_SHA256}  /tmp/cmake.tar.gz" | sha256sum -c -; \
-    mkdir -p /opt/cmake; \
-    tar -xzf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1; \
-    rm -f /tmp/cmake.tar.gz; \
-    ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake; \
-    ln -s /opt/cmake/bin/ctest /usr/local/bin/ctest; \
-    cmake --version
+    if [ -z "${TOOL_MANIFEST}" ]; then \
+        echo "TOOL_MANIFEST is empty. It must come from [toolchain.linux].tools in versions.toml." >&2; \
+        exit 2; \
+    fi; \
+    printf '%s\n' "${TOOL_MANIFEST}" | while IFS='|' read -r name url sha kind dest; do \
+        [ -n "${name}" ] || continue; \
+        if [ -z "${sha}" ]; then \
+            echo "no SHA-256 recorded for ${name}; verification is never skipped." >&2; exit 1; \
+        fi; \
+        echo "==> ${name} -> ${dest} (${kind})"; \
+        echo "    ${url}"; \
+        if ! curl -fsSL --retry 3 --retry-delay 3 "${url}" -o /tmp/dl.bin; then \
+            echo "FAILED TO DOWNLOAD ${name}" >&2; \
+            echo "  URL: ${url}" >&2; \
+            echo "  The pinned artifact is unavailable. Update versions.toml deliberately; do not fall back to an unpinned version." >&2; \
+            exit 1; \
+        fi; \
+        echo "${sha}  /tmp/dl.bin" | sha256sum -c - >/dev/null || { \
+            echo "CHECKSUM MISMATCH for ${name}: the file at ${url} is not the file that was pinned." >&2; exit 1; }; \
+        echo "    sha256 ok"; \
+        mkdir -p "${dest}"; \
+        case "${kind}" in \
+            tar-strip1) tar -xzf /tmp/dl.bin -C "${dest}" --strip-components=1 ;; \
+            tar-flat)   tar -xzf /tmp/dl.bin -C "${dest}" ;; \
+            zip-flat)   unzip -qo /tmp/dl.bin -d "${dest}" ;; \
+            *) echo "unknown install kind '${kind}' for ${name}" >&2; exit 1 ;; \
+        esac; \
+        rm -f /tmp/dl.bin; \
+        find "${dest}" -maxdepth 2 -type f -perm -u+x -exec chmod 0755 {} + 2>/dev/null || true; \
+    done
 
-# --- Ninja ------------------------------------------------------------------
+# Put every installed executable on PATH by symlinking it into /usr/local/bin,
+# which is already on PATH. This handles both layouts — a tool that ships bin/
+# and a tool that is a bare binary — WITHOUT this file naming either one, so
+# PATH does not have to be edited when the toolchain list changes.
 RUN set -euo pipefail; \
-    curl -fsSL "${NINJA_URL}" -o /tmp/ninja.zip; \
-    echo "${NINJA_SHA256}  /tmp/ninja.zip" | sha256sum -c -; \
-    unzip -q /tmp/ninja.zip -d /usr/local/bin; \
-    rm -f /tmp/ninja.zip; \
-    chmod +x /usr/local/bin/ninja; \
-    ninja --version
+    printf '%s\n' "${TOOL_MANIFEST}" | while IFS='|' read -r name url sha kind dest; do \
+        [ -n "${dest}" ] || continue; \
+        bindir="${dest}/bin"; \
+        [ -d "${bindir}" ] || bindir="${dest}"; \
+        find "${bindir}" -maxdepth 1 -type f -perm -u+x -exec ln -sf {} /usr/local/bin/ \; ; \
+    done; \
+    echo "==> executables now on PATH:"; \
+    ls -1 /usr/local/bin
 
 # --- the runner account -----------------------------------------------------
 # The runner never runs as root. A job that escapes into the container should
@@ -125,15 +138,23 @@ RUN set -euo pipefail; \
     mkdir -p /cache/fetchcontent /cache/ccache "${RUNNER_HOME}"; \
     chown -R runner:runner /cache "${RUNNER_HOME}"
 
-# --- the Actions runner -----------------------------------------------------
 USER runner
 WORKDIR ${RUNNER_HOME}
 
 RUN set -euo pipefail; \
-    curl -fsSL "${RUNNER_URL}" -o /tmp/runner.tar.gz; \
-    echo "${RUNNER_SHA256}  /tmp/runner.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/runner.tar.gz -C "${RUNNER_HOME}"; \
-    rm -f /tmp/runner.tar.gz; \
+    printf '%s\n' "${RUNNER_MANIFEST}" | { IFS='|' read -r name url sha kind dest; \
+        [ -n "${sha}" ] || { echo "no SHA-256 recorded for ${name}" >&2; exit 1; }; \
+        echo "==> ${name}"; \
+        curl -fsSL --retry 3 --retry-delay 3 "${url}" -o /tmp/runner.bin || { \
+            echo "FAILED TO DOWNLOAD ${name} from ${url}" >&2; exit 1; }; \
+        echo "${sha}  /tmp/runner.bin" | sha256sum -c - >/dev/null || { \
+            echo "CHECKSUM MISMATCH for ${name}" >&2; exit 1; }; \
+        case "${kind}" in \
+            tar-flat) tar -xzf /tmp/runner.bin -C "${RUNNER_HOME}" ;; \
+            zip-flat) unzip -qo /tmp/runner.bin -d "${RUNNER_HOME}" ;; \
+            *) echo "unknown runner install kind '${kind}'" >&2; exit 1 ;; \
+        esac; \
+        rm -f /tmp/runner.bin; }; \
     test -x "${RUNNER_HOME}/run.sh"
 
 # Cache volumes. These are the KEEP items: deleting them is what makes the next
@@ -146,8 +167,6 @@ USER root
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 USER runner
 
-# The runner writes .runner once it has configured itself from the JIT config.
-# Its absence after start-up means the runner never came up.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD pgrep -f Runner.Listener > /dev/null || exit 1
 

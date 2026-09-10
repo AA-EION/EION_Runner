@@ -288,24 +288,47 @@ jobs:
           set -euo pipefail
           ctest --test-dir build --output-on-failure 2>&1 | tee logs/test-macos.log
 
+      # A single-architecture build would silently ship a plugin that fails to
+      # load on half the Macs in the world, so every Mach-O is checked, not one.
+      #
+      # On macOS EVERY plugin format is a bundle DIRECTORY: the actual Mach-O
+      # lives at <bundle>/Contents/MacOS/<name>. Testing the bundle path itself
+      # with `-f` always fails, which is a trap worth stating out loud.
+      #
+      # Written for bash 3.2, which is what /bin/bash still is on macOS —
+      # `mapfile` does not exist there.
       - name: Verify the binaries really are universal2
         run: |
           set -euo pipefail
-          binary="build/Canary_artefacts/Release/CLAP/Canary.clap"
-          if [ ! -f "$binary" ]; then
-            echo "error: expected CLAP binary not found at $binary" >&2
+
+          checked=0
+          missing_slices=0
+
+          while IFS= read -r binary; do
+            checked=$((checked + 1))
+            printf '== %s\n' "$binary" | tee -a logs/lipo.log
+            lipo -info "$binary" | tee -a logs/lipo.log
+
+            if ! lipo -info "$binary" | grep -q 'arm64'; then
+              echo "   error: missing the arm64 slice" >&2
+              missing_slices=$((missing_slices + 1))
+            fi
+            if ! lipo -info "$binary" | grep -q 'x86_64'; then
+              echo "   error: missing the x86_64 slice" >&2
+              missing_slices=$((missing_slices + 1))
+            fi
+          done < <(find build/Canary_artefacts/Release -type f -path '*/Contents/MacOS/*')
+
+          if [ "$checked" -eq 0 ]; then
+            echo "error: found no Mach-O binaries under any Contents/MacOS/ — the build produced no bundles" >&2
             exit 1
           fi
-          lipo -info "$binary" | tee logs/lipo.log
-          # A single-architecture build here would silently ship a plugin that
-          # does not load on half the Macs in the world, so this is a hard gate.
-          if ! lipo -info "$binary" | grep -q "arm64"; then
-            echo "error: binary is missing the arm64 slice" >&2; exit 1
+          if [ "$missing_slices" -ne 0 ]; then
+            echo "error: $missing_slices architecture slice(s) missing across $checked binaries" >&2
+            exit 1
           fi
-          if ! lipo -info "$binary" | grep -q "x86_64"; then
-            echo "error: binary is missing the x86_64 slice" >&2; exit 1
-          fi
-          echo "universal2 confirmed"
+
+          echo "universal2 confirmed across $checked binaries"
 
       - name: Build the .pkg and .dmg
         run: |

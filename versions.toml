@@ -39,6 +39,13 @@ tag = "1.0.0"
 
 [linux_image]
 base = "ubuntu:24.04"
+# The base is additionally pinned by DIGEST. Individual apt package versions are
+# deliberately NOT pinned with `=<version>`: the Ubuntu archive removes
+# superseded packages, so a version-pinned apt install starts failing the moment
+# a security update lands. Pinning the base image by digest fixes the entire
+# package set to one immutable snapshot, which is both reproducible and
+# maintainable. Change the digest to move to a newer package set on purpose.
+base_digest = "sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254"
 cmake = "3.31.5"
 ninja = "1.12.1"
 # Image tag applied to the built image: runnerforge/linux-util:<tag>

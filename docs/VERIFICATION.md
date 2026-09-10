@@ -216,6 +216,58 @@ set is short by design and never silently.
 That is exactly what Stage A is for: each of those would have been attributed to the
 self-hosted runners had it been discovered in Stage B.
 
+
+### Stage F — the hosted-runner fallback (§18.8)
+
+The escape hatch for the day a laptop is offline. An untested fallback is not a
+fallback, so it was actually dispatched.
+
+| Stage | Run ID | Runner names | Conclusion | Duration | Notes |
+|---|---|---|---|---|---|
+| **F** | [34517038256](https://github.com/AA-EION/EION_Runner/actions/runs/34517038256) | `GitHub Actions 1000001661` / `…662` (hosted) | **success** | 477 s | `use_hosted_runners: true` |
+
+This run used the **emitted build workflow** — `templates/workflow-build.yml.tmpl`
+rendered for the canary — not the self-test workflow, so it also serves as the
+P9 gate. Its `run-name` reads `Canary stage-f-hosted-fallback-0001 [hosted
+fallback]`, confirming the `use_hosted_runners` flip took effect.
+
+Artifacts, all 8 present and non-empty:
+
+```
+Canary-macos-installer       48723783
+Canary-macos-universal       33735624
+Canary-windows-arm64         16193591
+Canary-windows-x64           16043643
+Canary-windows-installer      4840972
+Canary-logs-windows             13427
+Canary-logs-macos                8687
+Canary-aax-skipped                285
+```
+
+Job outcomes, including the reusable signing workflow:
+
+```
+build-windows                            success
+build-macos                              success
+sign-aax / sign-aax (cloud passthrough)  success
+sign-aax / sign-aax (macOS iLok)         skipped
+sign-aax / sign-aax (windows iLok)       skipped
+verify-artifacts                         success
+```
+
+The two iLok jobs correctly **skipped** rather than hanging: they are gated on
+`signing_mode` and their `runs-on` is never flipped to a hosted runner, because
+a hosted runner has no dongle and producing an unsigned artifact under a signed
+name would be worse than failing.
+
+The run was located by matching the unique `run_name_tag` echoed into
+`run-name`, never by taking "the newest run".
+
+The dispatched workflow was added to `.github/workflows/` only for the duration
+of this test and removed afterwards, so the repository tree matches the
+specified layout. It is reproducible by rendering
+`templates/workflow-build.yml.tmpl` and dispatching the result.
+
 <!-- EVIDENCE-TABLE-END -->
 
 ## What could not be verified, and why

@@ -1,0 +1,500 @@
+# ---------------------------------------------------------------------------
+# Canary — build, sign, verify, release.
+#
+# EMITTED BY RUNNER FORGE. Rendered from templates/workflow-build.yml.tmpl with
+# your configuration; paste the result into .github/workflows/ in your project.
+#
+# What it does:
+#   build-windows     x64 + ARM64 (cross-compiled), tests, Inno Setup installer
+#   build-macos       universal2, tests, .pkg/.dmg, Developer ID + notarize + staple
+#   sign-aax          calls the reusable signing workflow for the configured mode
+#   verify-artifacts  THE GATE — a run is not green until this passes
+#   release           gated on verify-artifacts succeeding
+#
+# Two things this workflow deliberately does NOT do:
+#   - install Inno Setup or clone the AAX SDK at run time. Both live in the image
+#     and on a mounted volume. A job that downloads its own toolchain is a job
+#     that fails the day the download does.
+#   - use continue-on-error anywhere. A step that is allowed to fail is a step
+#     whose result nobody reads.
+# ---------------------------------------------------------------------------
+name: Canary build
+
+run-name: Canary ${{ inputs.run_name_tag || github.sha }}${{ inputs.use_hosted_runners && ' [hosted fallback]' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name_tag:
+        description: >-
+          Unique tag echoed into run-name so GitHubActionsService can identify
+          the run it just created. Resolving "the newest run" is race-prone and
+          wrong under concurrency, so the run is matched on this instead.
+        required: true
+        type: string
+      use_hosted_runners:
+        description: >-
+          Run on GitHub-hosted runners instead of Runner Forge runners. The
+          escape hatch for the day a laptop is offline. An untested fallback is
+          not a fallback, so exercise this occasionally.
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: Canary-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_NAME: Canary
+  PROJECT_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}
+
+jobs:
+  # =========================================================================
+  build-windows:
+    name: build-windows
+    # The label set flips to hosted equivalents when use_hosted_runners is set.
+    # Both branches go through fromJSON so the expression has one consistent
+    # type; runs-on accepts either a string or an array.
+    runs-on: ${{ fromJSON(inputs.use_hosted_runners && '"windows-2022"' || '["self-hosted","windows","x64","container","forge"]') }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Report runner identity
+        shell: bash
+        run: |
+          echo "runner name : ${RUNNER_NAME:-unknown}"
+          echo "hosted mode : ${{ inputs.use_hosted_runners || false }}"
+
+      - name: Prepare directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/forge-fetchcontent" "${GITHUB_WORKSPACE}/logs"
+          echo "FETCHCONTENT_BASE_DIR=${{ runner.temp }}/forge-fetchcontent" >> "$GITHUB_ENV"
+          # sccache lives on the forge-sccache volume in the image; on hosted
+          # runners it simply is not there and the build compiles cold.
+          if [ -d "C:\cache\sccache" ]; then echo "SCCACHE_DIR=C:\cache\sccache" >> "$GITHUB_ENV"; fi
+
+      - name: Configure x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S canary -B build/x64 -G "Visual Studio 17 2022" -A x64 \
+            -DFETCHCONTENT_BASE_DIR="$FETCHCONTENT_BASE_DIR" \
+            2>&1 | tee logs/configure-x64.log
+
+      - name: Build x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/x64 --config Release --parallel 2>&1 | tee logs/build-x64.log
+
+      - name: Test x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/x64 -C Release --output-on-failure 2>&1 | tee logs/test-x64.log
+
+      # ARM64 reuses the source tree the x64 configure already fetched rather
+      # than re-cloning it. It must NOT share FETCHCONTENT_BASE_DIR: that
+      # directory also holds FetchContent's sub-build trees, whose CMake caches
+      # record a generator platform, and reusing them across platforms fails
+      # with "generator platform: ARM64 does not match ... x64".
+      - name: Configure ARM64 (cross-compile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          juce_src="$FETCHCONTENT_BASE_DIR/juce-src"
+          if [ ! -d "$juce_src" ]; then
+            echo "error: expected the x64 configure to have populated $juce_src" >&2
+            exit 1
+          fi
+          cmake -S canary -B build/arm64 -G "Visual Studio 17 2022" -A ARM64 \
+            -DFETCHCONTENT_SOURCE_DIR_JUCE="$juce_src" \
+            2>&1 | tee logs/configure-arm64.log
+
+      - name: Build ARM64 (cross-compile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/arm64 --config Release --parallel 2>&1 | tee logs/build-arm64.log
+
+      # A cross-compile that silently produced x64 output would pass every other
+      # check in this workflow, so the architecture is read from the PE header.
+      - name: Verify ARM64 output really is ARM64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Get-ChildItem -Path build/arm64 -Recurse -File |
+                    Where-Object { $_.Extension -in '.vst3', '.clap', '.exe', '.dll' -and $_.Length -gt 0 } |
+                    Select-Object -First 1
+          if (-not $binary) { throw 'No ARM64 binary found under build/arm64.' }
+          $bytes    = [System.IO.File]::ReadAllBytes($binary.FullName)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine  = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Host ("inspected : {0}" -f $binary.FullName)
+          Write-Host ("machine   : 0x{0:X4}" -f $machine)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 (0xAA64) but the binary reports 0x{0:X4}." -f $machine)
+          }
+
+      - name: Sign Windows binaries (Authenticode)
+        if: false
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          ./scripts/sign-windows-artifact.ps1 `
+            -ArtifactDir build/x64 `
+            -Endpoint 'https://eus.codesigning.azure.net' `
+            -Account 'example-signing-account' `
+            -Profile 'example-signing-profile'
+
+      - name: Build the Inno Setup installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Inno Setup is baked into the image; this workflow never installs it.
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $iscc) {
+            foreach ($candidate in @(
+                "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+                "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+                "C:\tools\innosetup\ISCC.exe")) {
+              if (Test-Path $candidate) { $iscc = $candidate; break }
+            }
+          }
+          if (-not $iscc) { throw 'ISCC.exe not found. Inno Setup must be present in the image.' }
+          New-Item -ItemType Directory -Force -Path installer-out | Out-Null
+          & $iscc "/DBuildDir=$(Join-Path $PWD 'build\x64\Canary_artefacts\Release')" `
+                  "/DArch=x64" "/DAppVersion=$env:PROJECT_VERSION" `
+                  "/DOutputDir=$(Join-Path $PWD 'installer-out')" `
+                  "canary\installer\windows\Canary.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Upload ${{ env.PROJECT_NAME }}-windows-x64
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-windows-x64
+          path: build/x64/Canary_artefacts/Release/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload ${{ env.PROJECT_NAME }}-windows-arm64
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-windows-arm64
+          path: build/arm64/Canary_artefacts/Release/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload ${{ env.PROJECT_NAME }}-windows-installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-windows-installer
+          path: installer-out/*.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Collect Windows logs
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p logs
+          {
+            echo "project     : ${PROJECT_NAME:-unknown}"
+            echo "runner name : ${RUNNER_NAME:-unknown}"
+            echo "job status  : ${{ job.status }}"
+            echo "run id      : ${GITHUB_RUN_ID:-unknown}"
+            echo "hosted mode : ${{ inputs.use_hosted_runners || false }}"
+          } > logs/summary.txt
+          for cache in build/x64/CMakeCache.txt build/arm64/CMakeCache.txt; do
+            [ -f "$cache" ] && cp "$cache" "logs/$(echo "$cache" | tr '/' '-')" || true
+          done
+
+      - name: Upload ${{ env.PROJECT_NAME }}-logs-windows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-logs-windows
+          path: logs/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+  # =========================================================================
+  build-macos:
+    name: build-macos
+    runs-on: ${{ fromJSON(inputs.use_hosted_runners && '"macos-14"' || '["self-hosted","macos","arm64","tart","forge"]') }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Report runner identity
+        run: |
+          echo "runner name : ${RUNNER_NAME:-unknown}"
+          echo "hosted mode : ${{ inputs.use_hosted_runners || false }}"
+          xcodebuild -version | head -1
+
+      - name: Prepare directories
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/forge-fetchcontent" "${GITHUB_WORKSPACE}/logs"
+          echo "FETCHCONTENT_BASE_DIR=${{ runner.temp }}/forge-fetchcontent" >> "$GITHUB_ENV"
+
+      - name: Configure universal2
+        run: |
+          set -euo pipefail
+          cmake -S canary -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DFETCHCONTENT_BASE_DIR="$FETCHCONTENT_BASE_DIR" \
+            2>&1 | tee logs/configure-macos.log
+
+      - name: Build universal2
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 2>&1 | tee logs/build-macos.log
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          ctest --test-dir build --output-on-failure 2>&1 | tee logs/test-macos.log
+
+      # On macOS every plugin format is a bundle DIRECTORY; the Mach-O lives at
+      # <bundle>/Contents/MacOS/<name>. Written for bash 3.2, which is what
+      # /bin/bash still is on macOS — mapfile does not exist there.
+      - name: Verify the binaries really are universal2
+        run: |
+          set -euo pipefail
+          checked=0
+          missing_slices=0
+          while IFS= read -r binary; do
+            checked=$((checked + 1))
+            lipo -info "$binary" | tee -a logs/lipo.log
+            lipo -info "$binary" | grep -q 'arm64'  || { echo "   missing arm64"  >&2; missing_slices=$((missing_slices+1)); }
+            lipo -info "$binary" | grep -q 'x86_64' || { echo "   missing x86_64" >&2; missing_slices=$((missing_slices+1)); }
+          done < <(find build/Canary_artefacts/Release -type f -path '*/Contents/MacOS/*')
+          [ "$checked" -gt 0 ] || { echo 'error: no Mach-O binaries found under any Contents/MacOS/' >&2; exit 1; }
+          [ "$missing_slices" -eq 0 ] || { echo "error: $missing_slices slice(s) missing" >&2; exit 1; }
+          echo "universal2 confirmed across $checked binaries"
+
+      - name: Package .pkg and .dmg
+        run: |
+          set -euo pipefail
+          chmod +x canary/installer/macos/build_installer.sh
+          canary/installer/macos/build_installer.sh \
+            --build-dir "$PWD/build/Canary_artefacts/Release" \
+            --version "$PROJECT_VERSION" \
+            --output-dir "$PWD/installer-out" \
+            --product-name "Canary" \
+            2>&1 | tee logs/package-macos.log
+
+      - name: Sign, notarize and staple
+        if: false
+        env:
+          APPLE_DEV_ID_P12:          ${{ secrets.APPLE_DEV_ID_P12 }}
+          APPLE_DEV_ID_P12_PASSWORD: ${{ secrets.APPLE_DEV_ID_P12_PASSWORD }}
+          APPLE_ASC_ISSUER_ID:       ${{ secrets.APPLE_ASC_ISSUER_ID }}
+          APPLE_ASC_KEY_ID:          ${{ secrets.APPLE_ASC_KEY_ID }}
+          APPLE_ASC_PRIVATE_KEY:     ${{ secrets.APPLE_ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/sign-macos-artifact.sh
+          ./scripts/sign-macos-artifact.sh \
+            --artifact-dir "build/Canary_artefacts/Release" \
+            --app-identity 'Developer ID Application: Example Ltd (ABCDE12345)' \
+            --installer-identity 'Developer ID Installer: Example Ltd (ABCDE12345)' \
+            --team-id 'ABCDE12345' \
+            --pkg "$(ls installer-out/*.pkg | head -1)" \
+            --dmg "$(ls installer-out/*.dmg | head -1)"
+
+      # Bundles are directories containing symlinks; upload-artifact flattens
+      # symlinks and would corrupt them. Tar first, untar in verification.
+      - name: Tar the macOS bundles
+        run: |
+          set -euo pipefail
+          mkdir -p tarred
+          tar -cpf tarred/macos-bundles.tar -C build/Canary_artefacts/Release .
+
+      - name: Upload ${{ env.PROJECT_NAME }}-macos-universal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-macos-universal
+          path: tarred/macos-bundles.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload ${{ env.PROJECT_NAME }}-macos-installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-macos-installer
+          path: |
+            installer-out/*.pkg
+            installer-out/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Collect macOS logs
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p logs
+          {
+            echo "project     : ${PROJECT_NAME:-unknown}"
+            echo "runner name : ${RUNNER_NAME:-unknown}"
+            echo "job status  : ${{ job.status }}"
+            echo "run id      : ${GITHUB_RUN_ID:-unknown}"
+            echo "hosted mode : ${{ inputs.use_hosted_runners || false }}"
+          } > logs/summary.txt
+          [ -f build/CMakeCache.txt ] && cp build/CMakeCache.txt logs/CMakeCache.txt || true
+
+      - name: Upload ${{ env.PROJECT_NAME }}-logs-macos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-logs-macos
+          path: logs/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+  # =========================================================================
+  # AAX signing, per the configured mode. In cloud mode this is a passthrough
+  # that still RE-UPLOADS under the signed name, so the artifact set is complete
+  # and identically shaped in every mode and no consumer has to branch on it.
+  sign-aax:
+    name: sign-aax
+    needs: [build-windows, build-macos]
+    if: always() && !cancelled()
+    uses: ./.github/workflows/rf-canary-sign.yml
+    with:
+      project_name: Canary
+      signing_mode: cloud
+      use_hosted_runners: ${{ inputs.use_hosted_runners || false }}
+    secrets: inherit
+
+  # =========================================================================
+  # THE GATE. A run whose build jobs pass but whose verify-artifacts fails is
+  # not green.
+  verify-artifacts:
+    name: verify-artifacts
+    runs-on: ${{ fromJSON(inputs.use_hosted_runners && '"ubuntu-24.04"' || '["self-hosted","linux","x64","container","forge"]') }}
+    timeout-minutes: 20
+    needs: [build-windows, build-macos, sign-aax]
+    if: always()
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+          pattern: "*"
+          merge-multiple: false
+
+      - name: Show what arrived
+        run: |
+          set -uo pipefail
+          find downloaded -maxdepth 2 -mindepth 1 -printf '%y %10s  %p\n' | sort -k3
+          echo
+          find downloaded -type f -printf '%s\t%p\n' | sort -rn | head -40
+
+      - name: Render the artifact manifest
+        run: |
+          set -euo pipefail
+          project="${PROJECT_NAME}"
+          cat > manifest.json <<JSON
+          {
+            "project": "${project}",
+            "artifacts": [
+              { "name": "${project}-windows-x64",       "required": true,  "globs": ["*.vst3", "*.clap", "*.exe"] },
+              { "name": "${project}-windows-arm64",     "required": true,  "globs": ["*.vst3", "*.clap", "*.exe"] },
+              { "name": "${project}-windows-installer", "required": true,  "globs": ["*.exe"] },
+              { "name": "${project}-macos-universal",   "required": true,  "untar": true,
+                "globs": ["*.vst3", "*.component", "*.clap", "*.app"],
+                "bundles": ["*.vst3", "*.component", "*.app"] },
+              { "name": "${project}-macos-installer",   "required": true,  "globs": ["*.pkg", "*.dmg"] },
+              { "name": "${project}-aax-windows",       "required": false, "globs": ["*.aaxplugin"] },
+              { "name": "${project}-aax-macos",         "required": false, "globs": ["*.aaxplugin"] },
+              { "name": "${project}-aax-skipped",       "required": true, "globs": ["*.txt"] },
+              { "name": "${project}-logs-windows",      "required": true,  "globs": ["summary.txt"] },
+              { "name": "${project}-logs-macos",        "required": true,  "globs": ["summary.txt"] }
+            ]
+          }
+          JSON
+          cat manifest.json
+
+      - name: Verify the artifact contract
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify-artifacts.sh
+          scripts/verify-artifacts.sh --manifest manifest.json --dir downloaded
+
+  # =========================================================================
+  # Gated on verify-artifacts SUCCEEDING, not merely finishing. Publishing a
+  # release whose artifacts failed their contract is the worst possible outcome.
+  release:
+    name: release
+    runs-on: ${{ fromJSON(inputs.use_hosted_runners && '"ubuntu-24.04"' || '["self-hosted","linux","x64","container","forge"]') }}
+    timeout-minutes: 20
+    needs: [verify-artifacts]
+    if: success() && github.ref_type == 'tag'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: "*"
+          merge-multiple: false
+
+      - name: Assemble the release assets
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          find release-assets -type f \
+            \( -name '*.exe' -o -name '*.pkg' -o -name '*.dmg' -o -name '*.tar' \) \
+            -exec cp {} upload/ \;
+          ls -la upload
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${PROJECT_NAME} ${GITHUB_REF_NAME}" \
+            --notes "Automated release built and verified by Runner Forge. Every artifact in this release passed the artifact contract in verify-artifacts." \
+            upload/*

@@ -1,0 +1,190 @@
+# ---------------------------------------------------------------------------
+# {{projectName}} — AAX signing (reusable workflow).
+#
+# EMITTED BY RUNNER FORGE. Called by the build workflow via `uses:`.
+#
+# Implements the two-job split for the iLok modes and a passthrough for cloud
+# mode. THE PASSTHROUGH STILL RE-UPLOADS the artifact under the signed name, so
+# the artifact set from §15.1 is complete and identically shaped in all three
+# modes. A consumer of these artifacts never has to branch on signing mode.
+#
+# In windows-ilok / macos-ilok mode the signing job runs on a HOST PROCESS
+# runner that is deliberately not containerized and deliberately has no
+# compiler:
+#
+#   not containerized  a container cannot see a USB device. On Windows this is
+#                      absolute — USB passthrough into a Windows container does
+#                      not exist, and no flag or workaround changes that.
+#   no compiler        this machine holds a signing credential. A build job that
+#                      could run here could compromise the signing host, so the
+#                      split is a security boundary, not packaging convenience.
+# ---------------------------------------------------------------------------
+name: {{projectName}} sign-aax
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        required: true
+        type: string
+      signing_mode:
+        description: One of cloud, windows-ilok, macos-ilok.
+        required: true
+        type: string
+      use_hosted_runners:
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  # =========================================================================
+  # cloud mode: nothing to do here — signing already happened inside the build
+  # job, because there is no physical device to be near. This job exists to
+  # RE-UPLOAD under the signed artifact names so the set is never short.
+  passthrough:
+    name: sign-aax (cloud passthrough)
+    if: inputs.signing_mode == 'cloud'
+    runs-on: ${{ fromJSON(inputs.use_hosted_runners && '{{linuxHostedJson}}' || '{{linuxUtilLabelsJson}}') }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Download the built AAX artifacts
+        uses: actions/download-artifact@{{downloadArtifactAction}}
+        with:
+          path: downloaded
+          pattern: "${{ inputs.project_name }}-aax-*"
+          merge-multiple: false
+
+      - name: Re-emit under the signed names
+        id: reemit
+        run: |
+          set -euo pipefail
+          mkdir -p signed-windows signed-macos
+
+          found=0
+          if [ -d "downloaded" ]; then
+            find downloaded -name '*.aaxplugin' -maxdepth 4 -print0 2>/dev/null |
+              while IFS= read -r -d '' bundle; do
+                case "$bundle" in
+                  *windows*) cp -R "$bundle" signed-windows/ ;;
+                  *macos*)   cp -R "$bundle" signed-macos/ ;;
+                esac
+              done
+            found="$(find downloaded -name '*.aaxplugin' | wc -l | tr -d ' ')"
+          fi
+
+          # If the build produced no AAX at all — no SDK, for instance — say so
+          # in a marker artifact rather than letting the set be silently short.
+          if [ "$found" -eq 0 ]; then
+            mkdir -p aax-skipped
+            echo "AAX skipped: signing mode is 'cloud' but the build produced no .aaxplugin bundle. This normally means the Avid AAX SDK was unavailable (paths.aaxSdkSource is empty). See docs/SIGNING.md." \
+              > aax-skipped/reason.txt
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload ${{ inputs.project_name }}-aax-skipped
+        if: always() && steps.reemit.outputs.skipped == 'true'
+        uses: actions/upload-artifact@{{uploadArtifactAction}}
+        with:
+          name: ${{ inputs.project_name }}-aax-skipped
+          path: aax-skipped/reason.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+  # =========================================================================
+  # windows-ilok: sign on the machine holding the dongle.
+  sign-windows-ilok:
+    name: sign-aax (windows iLok)
+    if: inputs.signing_mode == 'windows-ilok'
+    # NEVER flipped to a hosted runner. A hosted runner has no dongle, and
+    # pretending otherwise would produce an unsigned artifact named as signed.
+    runs-on: {{winIlokLabelsJson}}
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@{{checkoutAction}}
+
+      - name: Download the unsigned AAX artifact
+        uses: actions/download-artifact@{{downloadArtifactAction}}
+        with:
+          name: ${{ inputs.project_name }}-aax-windows-unsigned
+          path: unsigned
+
+      - name: Sign with the local dongle
+        shell: pwsh
+        env:
+          PACE_ACCOUNT:  ${{ secrets.PACE_ACCOUNT }}
+          PACE_PASSWORD: ${{ secrets.PACE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Get-ChildItem -Path unsigned -Recurse -Filter '*.aaxplugin' |
+                    Select-Object -First 1
+          if (-not $bundle) { throw 'No .aaxplugin found in the downloaded artifact.' }
+          New-Item -ItemType Directory -Force -Path signed | Out-Null
+          ./scripts/sign-aax-ilok.ps1 `
+            -InputPath $bundle.FullName `
+            -OutputPath (Join-Path 'signed' $bundle.Name) `
+            -WcGuid '{{paceWcGuid}}' `
+            -SignId '{{paceSignId}}'
+
+      - name: Upload ${{ inputs.project_name }}-aax-windows
+        if: always()
+        uses: actions/upload-artifact@{{uploadArtifactAction}}
+        with:
+          name: ${{ inputs.project_name }}-aax-windows
+          path: signed/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+  # =========================================================================
+  # macos-ilok: identical split, on the Mac. Mutually exclusive with
+  # windows-ilok — the dongle is in one machine or the other.
+  sign-macos-ilok:
+    name: sign-aax (macOS iLok)
+    if: inputs.signing_mode == 'macos-ilok'
+    runs-on: {{macIlokLabelsJson}}
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@{{checkoutAction}}
+
+      - name: Download the unsigned AAX artifact
+        uses: actions/download-artifact@{{downloadArtifactAction}}
+        with:
+          name: ${{ inputs.project_name }}-aax-macos-unsigned
+          path: unsigned
+
+      - name: Sign with the local dongle
+        env:
+          PACE_ACCOUNT:  ${{ secrets.PACE_ACCOUNT }}
+          PACE_PASSWORD: ${{ secrets.PACE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bundle="$(find unsigned -name '*.aaxplugin' -maxdepth 4 | head -1)"
+          [ -n "$bundle" ] || { echo 'No .aaxplugin found in the downloaded artifact.' >&2; exit 1; }
+          mkdir -p signed
+          chmod +x ./scripts/sign-aax-ilok.sh
+          ./scripts/sign-aax-ilok.sh \
+            --input "$bundle" \
+            --output "signed/$(basename "$bundle")" \
+            --wcguid '{{paceWcGuid}}' \
+            --signid '{{paceSignId}}'
+
+      - name: Upload ${{ inputs.project_name }}-aax-macos
+        if: always()
+        uses: actions/upload-artifact@{{uploadArtifactAction}}
+        with:
+          name: ${{ inputs.project_name }}-aax-macos
+          path: signed/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

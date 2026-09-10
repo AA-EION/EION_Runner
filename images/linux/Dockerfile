@@ -27,6 +27,13 @@ ARG NINJA_URL
 ARG NINJA_SHA256
 ARG IMAGE_TAG
 
+# Optional. PEM contents of an extra trusted CA, for networks that terminate and
+# re-sign TLS (corporate proxies, CI egress gateways). Empty by default, in which
+# case nothing is installed and only the system trust store is used. This is a
+# certificate, not a credential: it is public by nature, so unlike a secret it is
+# safe to pass as a build argument.
+ARG EXTRA_CA_PEM=""
+
 LABEL org.opencontainers.image.title="runnerforge/linux-util" \
       org.opencontainers.image.description="Runner Forge ephemeral Linux runner: release assembly, artifact verification, Linux verification build" \
       org.opencontainers.image.version="${IMAGE_TAG}" \
@@ -73,6 +80,19 @@ RUN apt-get update && \
         libglu1-mesa-dev \
         mesa-common-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# --- optional extra CA ------------------------------------------------------
+# Must come after ca-certificates is installed and before anything is downloaded,
+# or the downloads below fail TLS verification on a re-signing network. Skipping
+# verification is never an option, so the trust store is fixed instead.
+RUN set -euo pipefail; \
+    if [ -n "${EXTRA_CA_PEM}" ]; then \
+        printf '%s\n' "${EXTRA_CA_PEM}" > /usr/local/share/ca-certificates/runnerforge-extra.crt; \
+        update-ca-certificates; \
+        echo "installed an extra trusted CA"; \
+    else \
+        echo "no extra CA supplied; using the system trust store only"; \
+    fi
 
 # --- CMake ------------------------------------------------------------------
 # Every download is verified against the SHA-256 recorded in versions.toml. A

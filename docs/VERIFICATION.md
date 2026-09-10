@@ -7,6 +7,10 @@ plainly, what has **not** been run and why.
 > **Status of this document:** the evidence table below is filled in from real workflow
 > runs. Any stage that has not been executed says so explicitly and is not counted as
 > passing. A stage with no run ID is a stage that did not happen.
+>
+> **Stage A is green.** Stages B–E require the user's physical Windows PC and Apple
+> Silicon Mac and have not been executed; see "What could not be verified" at the
+> bottom, which names each one and why.
 
 ## The definition of green
 
@@ -111,7 +115,107 @@ Between runs, nothing is pre-warmed by hand. The caches have to warm themselves.
 ## Evidence
 
 <!-- EVIDENCE-TABLE-START -->
-_Not yet populated. See "Status" at the top of this document._
+
+### Stage A — the artifact contract on GitHub-hosted runners
+
+| Stage | Run ID | Runner names | Conclusion | Duration | Reaper | Leftovers |
+|---|---|---|---|---|---|---|
+| **A** | [34513859729](https://github.com/AA-EION/EION_Runner/actions/runs/34513859729) | `GitHub Actions 1000001656` (windows-2022), `…657` (macos-14), `…658` / `…660` (ubuntu-24.04) | **success** | 666 s | n/a — hosted runners are destroyed by GitHub | n/a |
+
+Per-job timings for that run:
+
+```
+build-windows      success     654s
+build-macos        success     323s
+aax-marker         success       5s
+verify-artifacts   success       6s
+```
+
+**Artifacts produced (all 8, none empty):**
+
+| Artifact | Bytes |
+|---|---|
+| `Canary-macos-installer` | 48,723,597 |
+| `Canary-macos-universal` | 33,735,600 |
+| `Canary-windows-arm64` | 16,193,617 |
+| `Canary-windows-x64` | 16,043,627 |
+| `Canary-windows-installer` | 4,841,229 |
+| `Canary-logs-windows` | 13,410 |
+| `Canary-logs-macos` | 8,729 |
+| `Canary-aax-skipped` | 269 |
+
+**Downloaded artifact tree** (largest first, abridged):
+
+```
+97191936  Canary-macos-universal/macos-bundles.tar
+42275862  Canary-windows-arm64/Canary_SharedCode.lib
+38673368  Canary-windows-x64/Canary_SharedCode.lib
+24599427  Canary-macos-installer/Canary-1.0.0-macos.dmg
+24229067  Canary-macos-installer/Canary-1.0.0-macos.pkg
+ 7428096  Canary-windows-arm64/Standalone/Canary.exe
+ 7170560  Canary-windows-x64/Standalone/Canary.exe
+ 6428672  Canary-windows-arm64/VST3/Canary.vst3/Contents/arm64-win/Canary.vst3
+ 6182400  Canary-windows-arm64/CLAP/Canary.clap
+ 6133248  Canary-windows-x64/VST3/Canary.vst3/Contents/x86_64-win/Canary.vst3
+ 5878784  Canary-windows-x64/CLAP/Canary.clap
+ 5392840  Canary-windows-installer/Canary-1.0.0-windows-x64.exe
+```
+
+Windows total 125,576,126 bytes across 3 artifacts; macOS total 146,020,430 bytes across
+2 artifacts. **Both platforms produced non-empty artifacts.**
+
+**The ARM64 output really is ARM64.** The path
+`Canary-windows-arm64/VST3/Canary.vst3/Contents/arm64-win/Canary.vst3` is JUCE's ARM64
+bundle layout, and the workflow additionally reads the PE header and requires machine
+`0xAA64` — a cross-compile that silently emitted x64 would pass every other check in the
+run, so this is asserted rather than assumed.
+
+**The macOS output really is universal2.** `lipo` output captured on the runner:
+
+```
+VST3/Canary.vst3/Contents/MacOS/Canary        are: x86_64 arm64
+Standalone/Canary.app/Contents/MacOS/Canary   are: x86_64 arm64
+CLAP/Canary.clap/Contents/MacOS/Canary        are: x86_64 arm64
+AU/Canary.component/Contents/MacOS/Canary     are: x86_64 arm64
+```
+
+**Independently re-verified after download.** The same `verify-artifacts.sh` was re-run
+locally against the downloaded tree, untarring the macOS bundles and asserting
+`Contents/MacOS/` and `Contents/Info.plist` survived:
+
+```
+ARTIFACT                           PRESENT           BYTES   FILES  VERDICT
+Canary-windows-x64                 yes            57862802       9  pass
+Canary-windows-arm64               yes            62320484       8  pass
+Canary-windows-installer           yes             5392840       1  pass
+Canary-macos-universal             yes            97191936       1  pass
+Canary-macos-installer             yes            48828494       2  pass
+Canary-aax-windows                 no                    0       0  skip
+Canary-aax-macos                   no                    0       0  skip
+Canary-aax-skipped                 yes                 171       1  pass
+Canary-logs-windows                yes               56198       8  pass
+Canary-logs-macos                  yes               43795       7  pass
+
+ARTIFACT CONTRACT SATISFIED
+```
+
+`Canary-aax-windows` and `Canary-aax-macos` are legitimately absent: the canary has no
+AAX target, and the run emits `Canary-aax-skipped` naming that reason, so the artifact
+set is short by design and never silently.
+
+**It took three attempts to get here, and each failure was a real defect:**
+
+1. `windows-latest` no longer means Server 2022 — it resolves to Server 2025 with Visual
+   Studio 2026, so the `Visual Studio 17 2022` generator found nothing. Pinned to
+   `windows-2022`.
+2. On macOS every plugin format is a bundle *directory*, so testing the `.clap` path with
+   `-f` could never succeed. The check now walks every `Contents/MacOS/` binary.
+3. Sharing `FETCHCONTENT_BASE_DIR` between the x64 and ARM64 configures collided on
+   FetchContent's *sub-build* cache, which records a generator platform.
+
+That is exactly what Stage A is for: each of those would have been attributed to the
+self-hosted runners had it been discovered in Stage B.
+
 <!-- EVIDENCE-TABLE-END -->
 
 ## What could not be verified, and why

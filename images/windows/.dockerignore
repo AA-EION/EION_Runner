@@ -1,0 +1,5 @@
+# Keep the build context to exactly what the Dockerfile copies. A fat context is
+# slow to send to the daemon and risks sweeping a stray credential into a layer.
+*
+!install-buildtools.ps1
+!entrypoint.ps1

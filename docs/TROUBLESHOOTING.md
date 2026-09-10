@@ -97,5 +97,89 @@ before reporting a pinned URL as dead.
 
 ---
 
+---
+
+## 5. `juce_LinuxMessageThread.h: No such file or directory` when building CLAP
+
+**Symptom** — the `Canary_CLAP` target fails while every other format compiles:
+
+```
+clap-juce-wrapper.cpp:37:10: fatal error:
+  juce_audio_plugin_client/utility/juce_LinuxMessageThread.h: No such file or directory
+```
+
+**Cause** — a version mismatch that is easy to misread as a missing dependency. JUCE
+moved that header from `utility/` to `detail/` in 7.0.6. The pinned
+`clap-juce-extensions` predates the move.
+
+The trap is that `clap-juce-extensions`'s git tags (`0.24.0`, `0.25.0`, `0.26.0`) look
+like project versions but track the **CLAP specification** version. The newest of them
+is a commit from **2022-05-31**; `main` is years ahead and has carried the
+`JUCE_VERSION`-guarded include since "Updates for JUCE 7.0.6". Picking "the newest tag"
+therefore picks four-year-old code.
+
+**Fix** — pin by **commit SHA**, which `versions.toml` now does, with the reason
+recorded inline. A SHA is a stronger pin than a tag anyway. Note that `GIT_SHALLOW` must
+be `FALSE` for a SHA pin: a shallow clone can only check out a branch or tag tip, not an
+arbitrary commit.
+
+Verify a candidate SHA carries the guard before pinning it:
+
+```bash
+git clone --depth 60 https://github.com/free-audio/clap-juce-extensions.git probe
+sed -n '64,76p' probe/src/wrapper/clap-juce-wrapper.cpp   # expect a JUCE_VERSION guard
+```
+
+---
+
+## 6. `-Wfloat-equal` on a test that is *supposed* to compare exactly
+
+**Symptom** — JUCE's recommended warning flags turn `==` on floats into a warning, and
+the offending line is a test asserting that a gain of zero produces silence.
+
+**Cause** — the warning is right in general and wrong here. Bit-exact silence is the
+property under test; a tolerance would let a real bug through.
+
+**Fix** — suppress the warning around a single documented helper rather than loosening
+the assertion:
+
+```cpp
+JUCE_BEGIN_IGNORE_WARNINGS_GCC_LIKE ("-Wfloat-equal")
+bool isExactlyZero (float value) noexcept { return value == 0.0f; }
+JUCE_END_IGNORE_WARNINGS_GCC_LIKE
+```
+
+The macro is a no-op on MSVC, which has no equivalent warning. Do not reach for
+`-Wno-float-equal` project-wide: that hides the accidental comparisons too.
+
+---
+
+## 7. Linking a test executable to a JUCE plugin target: headers not found
+
+**Symptom**
+
+```
+Tests.cpp:11:10: fatal error: juce_audio_processors/juce_audio_processors.h: No such file
+```
+
+…even though the test target links the plugin's `_SharedCode` library and the
+`JucePlugin_*` definitions clearly arrived (they show up on the compiler command line).
+
+**Cause** — `juce_add_plugin` links the JUCE modules into `<Target>_SharedCode`
+**PRIVATE**, so the static library's interface carries no include directories. The
+definitions propagate; the include paths do not.
+
+**Fix** — link the plugin's main target *and* the module target:
+
+```cmake
+target_link_libraries(CanaryTests PRIVATE Canary juce::juce_audio_utils ...)
+```
+
+A related trap: building the test with `juce_add_console_app` defines
+`JUCE_STANDALONE_APPLICATION=1` while the plugin target defines it as
+`JucePlugin_Build_Standalone`, producing a "redefined" warning on every translation
+unit. A plain `add_executable` avoids the collision.
+
+
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

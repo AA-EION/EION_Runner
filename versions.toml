@@ -64,7 +64,21 @@ macos_version = "26.0"
 [project]
 # JUCE and clap-juce-extensions revisions consumed by canary/ and by RecRoll.
 juce = "8.0.4"
-clap_juce_extensions = "1.1.9"
+# clap-juce-extensions is pinned by COMMIT SHA, not by tag, and deliberately so.
+#
+# 2026-09-10, two findings, both recorded in docs/TROUBLESHOOTING.md:
+#   1. The initially pinned "1.1.9" does not exist. `git ls-remote --tags` reports
+#      only 0.24.0, 0.25.0 and 0.26.0 — the project never reached 1.x.
+#   2. Those tags track the *CLAP specification* version, not the extension's own
+#      version. The newest of them, 0.26.0, is a commit from 2022-05-31. It does
+#      not build against JUCE 8: it includes
+#      juce_audio_plugin_client/utility/juce_LinuxMessageThread.h, which JUCE
+#      moved to detail/ in 7.0.6. Verified by a real failing compile.
+#
+# There is therefore no usable tag, and a SHA is the strongest pin available.
+# This commit carries the JUCE_VERSION-guarded include that resolves to the
+# detail/ path for JUCE >= 7.0.6, which is what JUCE 8.0.4 ships.
+clap_juce_extensions = "9fbefae3d9c3d130aafb558c1ec15427a4bd24be"  # main @ 2026-09-09
 
 # ---------------------------------------------------------------------------
 # [checksums] — SHA-256 of every binary the image build scripts download.

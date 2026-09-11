@@ -1,10 +1,16 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 //
 // Runner Forge — macOS.
 //
 // Deployment target macOS 26 (Tahoe). Swift 6 language mode, Swift Concurrency
 // throughout (async/await and structured tasks — no completion handlers), and
 // the Observation framework (@Observable, never ObservableObject).
+//
+// The tools version is 6.2, not 6.0, because `.macOS(.v26)` was introduced in
+// PackageDescription 6.2. With tools-version 6.0 SwiftPM compiles this manifest
+// against the 6.0 PackageDescription and rejects `.v26` as unavailable, even on
+// a Swift 6.3 toolchain — the toolchain is not what gates it, the declared tools
+// version is.
 //
 // Built as a library plus a thin executable so the logic is testable: Swift
 // Testing cannot import an executable target. The .app bundle, its Info.plist

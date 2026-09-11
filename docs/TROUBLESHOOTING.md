@@ -697,6 +697,60 @@ field: ones the program writes and ones the person writes. Validating the second
 population at load time turns first-run into a dead end. Validate what the
 program produced; *report* what the person has not yet supplied.
 
+
+## 23. Preflight reports a hard block on a machine that is demonstrably working
+
+**Symptom** — on a Windows 11 machine actively running Hyper-V, WSL2 with two
+distributions and a Docker daemon that answers, Preflight said:
+
+```
+Fail   Hardware virtualization   Virtualization is disabled in firmware.
+                                 Hyper-V cannot start without it.
+```
+
+marked as a **hard block** whose fix "cannot be changed from Windows". On the
+same screen: `Windows feature: Microsoft-Hyper-V  enabled`, `WSL2 with a
+distribution  2 distribution(s) installed`, `Docker daemon reachable  the
+daemon is answering`. All three are impossible without virtualization.
+
+**Cause** — `Win32_Processor.VirtualizationFirmwareEnabled` reports **False once
+a hypervisor is running.** Hyper-V has already claimed VT-x, and the host OS no
+longer sees the firmware flag. The property answers "can the host turn
+virtualization on", not "is virtualization available" — and once Hyper-V owns
+it, the answer is legitimately no.
+
+So the check was most likely to fail on exactly the machines that were most
+ready, and it delivered the most discouraging message the app has: a hard block
+requiring a UEFI trip that was not needed.
+
+**Fix** — ask whether a hypervisor is running *before* asking the CPU:
+
+```sql
+SELECT HypervisorPresent FROM Win32_ComputerSystem
+```
+
+If it is present, virtualization is working by definition and by demonstration;
+report Pass. Only when no hypervisor is present do the firmware flags mean what
+they appear to mean, and only then is the block real.
+
+**The same screen carried a second false negative.** `wraptool on PATH` reported
+`wraptool.exe is not on PATH` while `iLok driver: PACE support files present`
+and `iLok dongle detected` both passed. The PACE installer does not add itself
+to PATH — it installs under
+`PACEAntiPiracy\Eden\Fusion\Versions\<version>\bin` — so PATH is the wrong
+question. The Signing page already knew this and used `SigningService
+.FindWraptool()` (WRAPTOOL override → PATH → versioned SDK path); Preflight was
+still asking PATH, so the two pages disagreed about whether the same tool
+existed. Both now call the same discovery, and the check is named "wraptool
+available" rather than "wraptool on PATH", because the old name encoded the
+wrong expectation.
+
+**The general rule.** A readiness check must ask a question whose *false* answer
+actually means "not ready". `VirtualizationFirmwareEnabled == false` and
+`not on PATH` both have a common, healthy cause, so neither is that question. A
+check that fires on working machines is worse than no check: it sends people to
+fix things that are not broken, and it teaches them to ignore the page.
+
 _More entries are added as failures are encountered. An entry is only added here
 once it has actually been hit — this file is a log, not a list of things that
 might go wrong._

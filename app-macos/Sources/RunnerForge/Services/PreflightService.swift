@@ -254,12 +254,20 @@ public struct PreflightService: Sendable {
                              fixHint: "Plug the dongle into this Mac, or switch signing mode to Cloud.",
                              blocksClasses: ["mac-ilok"]))
 
-        checks.append(ProcessRunner.isOnPath("wraptool")
-            ? PreflightCheck(name: "wraptool on PATH", status: .pass, detail: "found")
-            : PreflightCheck(name: "wraptool on PATH", status: .fail,
-                             detail: "wraptool is not on PATH.",
-                             fixHint: "Install PACE Eden tools and add its bin directory to PATH.",
-                             blocksClasses: ["mac-ilok"]))
+        // The PACE installer does NOT put wraptool on PATH, so asking PATH
+        // reports "missing" on a machine where it is installed and working. Use
+        // the same discovery the Signing page and the signing scripts use, so
+        // the two pages cannot disagree about whether it is there.
+        checks.append(SigningService.findWraptool().map { path in
+            PreflightCheck(name: "wraptool available", status: .pass, detail: path)
+        } ?? PreflightCheck(
+            name: "wraptool available", status: .fail,
+            detail: "wraptool was not found on PATH, at the PACE Fusion SDK install path, "
+                + "or via the WRAPTOOL environment variable.",
+            fixHint: "Install the PACE Fusion SDK (it ships wraptool under "
+                + "/Applications/PACEAntiPiracy/Eden/Fusion/Versions/<version>/bin), "
+                + "or set WRAPTOOL to its full path.",
+            blocksClasses: ["mac-ilok"]))
 
         return checks
     }

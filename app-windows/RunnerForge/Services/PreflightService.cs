@@ -117,6 +117,37 @@ public sealed class PreflightService(
     {
         try
         {
+            // ---------------------------------------------------------------
+            // ASK WHETHER A HYPERVISOR IS RUNNING BEFORE ASKING THE CPU.
+            //
+            // Win32_Processor.VirtualizationFirmwareEnabled reports FALSE once
+            // Hyper-V is running, because the hypervisor has already claimed
+            // VT-x and the host OS no longer sees the firmware flag. Reading it
+            // alone therefore declares "virtualization is disabled in firmware"
+            // on a machine that is at that moment running Hyper-V, WSL2 and
+            // Docker — which is exactly what it did, as a HARD BLOCK saying the
+            // problem "cannot be changed from Windows".
+            //
+            // If a hypervisor is present then virtualization is working, by
+            // definition and by demonstration. That answer comes first.
+            // ---------------------------------------------------------------
+            using (var system = new ManagementObjectSearcher(
+                "SELECT HypervisorPresent FROM Win32_ComputerSystem"))
+            {
+                foreach (ManagementObject box in system.Get().Cast<ManagementObject>())
+                {
+                    if (box["HypervisorPresent"] as bool? == true)
+                    {
+                        return new PreflightCheck
+                        {
+                            Name = "Hardware virtualization",
+                            Status = PreflightStatus.Pass,
+                            Detail = "a hypervisor is running, so virtualization is enabled and in use",
+                        };
+                    }
+                }
+            }
+
             using var searcher = new ManagementObjectSearcher(
                 "SELECT VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions FROM Win32_Processor");
 
@@ -372,13 +403,21 @@ public sealed class PreflightService(
                                    FixHint = "Plug the dongle into this machine, or switch signing mode to Cloud.",
                                    BlocksClasses = ["win-ilok"] };
 
-        bool wraptool = ProcessRunner.IsOnPath("wraptool");
-        yield return wraptool
-            ? new PreflightCheck { Name = "wraptool on PATH", Status = PreflightStatus.Pass,
-                                   Detail = "found" }
-            : new PreflightCheck { Name = "wraptool on PATH", Status = PreflightStatus.Fail,
-                                   Detail = "wraptool.exe is not on PATH.",
-                                   FixHint = "Install PACE Eden tools and add its bin directory to PATH.",
+        // The PACE installer does NOT put wraptool on PATH, so asking PATH
+        // reports "missing" on a machine where it is installed and working.
+        // Use the same discovery the Signing page and the signing scripts use —
+        // the WRAPTOOL override, then PATH, then the versioned SDK install
+        // path — so the two pages cannot disagree about whether it is there.
+        string? wraptool = SigningService.FindWraptool();
+        yield return wraptool is not null
+            ? new PreflightCheck { Name = "wraptool available", Status = PreflightStatus.Pass,
+                                   Detail = wraptool }
+            : new PreflightCheck { Name = "wraptool available", Status = PreflightStatus.Fail,
+                                   Detail = "wraptool.exe was not found on PATH, at the PACE Fusion SDK "
+                                            + "install path, or via the WRAPTOOL environment variable.",
+                                   FixHint = "Install the PACE Fusion SDK (it ships wraptool under "
+                                             + @"PACEAntiPiracy\Eden\Fusion\Versions\<version>\bin), "
+                                             + "or set WRAPTOOL to its full path.",
                                    BlocksClasses = ["win-ilok"] };
     }
 

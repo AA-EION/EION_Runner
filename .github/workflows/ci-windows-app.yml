@@ -37,6 +37,8 @@ concurrency:
 
 jobs:
   build:
+    # Pinned, and recorded in versions.toml [ci].windows_image — see the note
+    # there about why `runs-on:` cannot read the manifest.
     runs-on: windows-2022
     timeout-minutes: 45
 

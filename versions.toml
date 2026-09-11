@@ -58,6 +58,24 @@ checkout = "v4"
 upload_artifact = "v4"
 download_artifact = "v4"
 
+# GitHub-hosted runner images and tool pins used by THIS repository's own CI —
+# the workflows that build and package the two Runner Forge apps, and the hosted
+# stage of the self-test. These are recorded here so the manifest stays the one
+# place to look, but note honestly that GitHub Actions cannot read a TOML file
+# when it parses `runs-on:`, so the workflow files repeat these literals. If you
+# change one, change both; the comment in each workflow points back here.
+#
+# `windows-latest` and `macos-latest` are deliberately NOT used: `windows-latest`
+# moved to Server 2025 with Visual Studio 2026 and broke the VS 2022 generator
+# (see docs/TROUBLESHOOTING.md #12).
+[ci]
+windows_image = "windows-2022"     # matches the win-build container: servercore:ltsc2022 + VS BuildTools 17.12
+linux_image = "ubuntu-24.04"       # matches the linux-util base image
+macos_image_selftest = "macos-14"  # x86_64+arm64 universal2 plugin builds
+macos_image_app = "macos-26"       # the app targets macOS 26, so it needs the macOS 26 SDK
+dotnet_sdk = "9.0.x"
+wix = "5.0.2"
+
 [host_minimums]
 docker_desktop = "4.37.0"
 windows_build = 22000

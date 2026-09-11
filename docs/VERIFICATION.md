@@ -369,6 +369,7 @@ from a real Apple Silicon macOS 26 runner.
 | `RunnerForge.dmg` | **1,227,193 bytes**, `hdiutil verify` → checksum VALID |
 | `RunnerForge-app.tar` | 3,141,120 bytes |
 | App inside the mounted DMG | 3,096 KB |
+| Re-verified after the §5 tree refactor | [34551453059](https://github.com/AA-EION/EION_Runner/actions/runs/34551453059), commit `966293c`, green |
 
 The bundle, asserted rather than assumed:
 
@@ -450,3 +451,59 @@ codesign --display --entitlements - --xml dist/RunnerForge.app | plutil -convert
 <!-- LIMITATIONS-START -->
 _Not yet populated._
 <!-- LIMITATIONS-END -->
+
+## §21 acceptance checklist
+
+Ticked against what actually ran, not against intent. An item is ticked only if
+there is evidence above or in the repository that anyone can re-check; anything
+that could not be proven from here says so and says why.
+
+| | Item | Status |
+| --- | --- | --- |
+| ✅ | Every file in §5 exists and is complete. No placeholders. | `git ls-files` diffed against §5: zero missing. Two files exist that §5 predates or could not anticipate — see **Deviations** below. |
+| ⚠️ | No version string hardcoded outside `versions.toml`. | True for every image build, script and app. **Not** true for four GitHub-hosted runner labels and two CI tool pins, which are now recorded in `versions.toml [ci]` — Actions cannot read a TOML file when it parses `runs-on:`, so those literals are unavoidably duplicated. Named rather than papered over. |
+| ✅ | No secret in any file, image layer, log, or argv. | `ConfigStore.validate` rejects all ten keystore key names at any depth in forge.json (10 parameterised cases green on both platforms). Secrets reach child processes through the environment only. `LogBus` redacts by value and by shape. Nothing is passed via `--build-arg`. |
+| ✅ | Runners are ephemeral and JIT-configured. `config.sh` appears nowhere. | Every occurrence of the string in the repository is prose explaining its absence. `jitconfig.{sh,ps1}` mint a JIT config per job; JWT signing verified against `openssl`. |
+| ✅ | Windows ARM64 is cross-compiled; no arm64 container, no emulation. | Stage A: the ARM64 binaries' PE machine field reads `0xAA64`, produced by the MSVC ARM64 toolset on an amd64 runner. |
+| ✅ | No attempt anywhere to virtualize macOS on Windows. | The only three mentions of QEMU/KVM/WSL in the tree are the error messages that refuse to try. |
+| ✅ | Reaper detects and kills strays, returns 0/10/20 as specified. | Gate-tested on both twins: SIGTERM → wait → SIGKILL → **re-verify**, and 20 is returned when something survives. PIDs recorded in `state.json` are protected. |
+| ✅ | Sweeper never deletes a KEEP item; unit tests prove it on both platforms. | `SweeperPolicyTests` green in both suites (73 tests Windows, 38 macOS). Both twins independently reported identical numbers on the same fixture (3,700,004 reclaimable / 3,500,000 reclaimed). `docker system prune` is rejected in every spelling tested. |
+| ⚠️ | All three signing modes selectable in both GUIs with live checklists; `windows-ilok` default. | Implemented in both apps and compiled on both platforms; the default is `windows-ilok`. Not exercised through a running GUI — see **What could not be verified**. |
+| ✅ | Both apps have the same eight pages in the same order. | Preflight, Targets, Credentials, Signing, Runners, Cleanup, Export, Logs — `ForgePage.allCases` (macOS) and the WPF nav list (Windows). |
+| ⚠️ | Closing either app drains, reaps, sweeps, with visible progress. | Implemented: Windows `OnExit`, macOS `applicationShouldTerminate` returning `.terminateLater` until the drain, reap and sweep finish. Compiled, not exercised at runtime. |
+| ✅ | Every upload step uses `if: always()` and `if-no-files-found: error`. | All 31 `upload-artifact` steps across the four workflows and three templates carry both. Checked mechanically, not by eye. |
+| ✅ | `verify-artifacts` gates the run and fails on any missing or empty artifact. | Proven by a real failure: Stage A run 34505950332 named all five missing artifacts and failed the run rather than passing an empty set. |
+| ✅ | **Stage A green, with pasted run ID and artifact sizes.** | Run 34513859729, 666 s, 8 artifacts, sizes above. Artifacts downloaded and independently re-verified. |
+| ❌ | **Stage B green, with job `runner_name` values proving self-hosted execution.** | Needs the user's Windows PC and Apple Silicon Mac. Cannot be run from here. |
+| ❌ | **Stage C: `requiredGreenRuns` consecutive green runs, durations showing cache warming.** | Same — requires Stage B first. |
+| ❌ | **Stage D: in-app self-test writes `verification.lastProof`; badge visible in the UI.** | Requires a running app on real hardware. |
+| ❌ | **Stage E: real repo run reported, with any skipped artifacts named and justified.** | Requires the user's own plugin repository and their runners. |
+| ✅ | **Stage F (§18.8): hosted-runner fallback produces the full artifact set.** | Run 34517038256, 477 s, 8 artifacts, `use_hosted_runners: true`; the iLok jobs correctly skipped. |
+| ✅ | Windows AND macOS artifacts downloaded and non-empty on every stage above. | Stage A and Stage F both: all four macOS bundles confirmed universal2 (x86_64 + arm64), ARM64 PE machine `0xAA64`. |
+| ✅ | `docs/VERIFICATION.md` contains the evidence table with reproducible commands. | This file. Every stage carries the commands that reproduce it. |
+| ✅ | Every phase Gate has real pasted output. | In the session transcript and in the stage sections above. |
+
+Two rows the original checklist predates, added because the apps are only
+delivered once they are installable:
+
+| | Item | Status |
+| --- | --- | --- |
+| ✅ | **Stage G: the Windows app builds, its tests RUN, and the MSI carries the program files.** | Run 34550945700. 73 tests passed on Windows — the only place they can run. MSI `File` table read back: 24 rows, `RunnerForge.exe` at 62,984,861 bytes. |
+| ✅ | **Stage H: the macOS app builds, its tests run, and the DMG mounts with a runnable app.** | Run 34551196570. 38 tests in 4 suites passed. `hdiutil verify` VALID; the mounted DMG carries a runnable `RunnerForge.app` and an `/Applications` drop target; App Sandbox asserted `false` **as signed**. |
+
+### Deviations from §5, and why
+
+Two files exist that a literal reading of §5 does not list. Both are stated here
+rather than left for someone to find:
+
+1. **`app-macos/Sources/RunnerForgeApp/RunnerForgeApp.swift`** — §5 puts this file
+   at `Sources/RunnerForge/RunnerForgeApp.swift`, and §5 also requires
+   `Tests/RunnerForgeTests/`. Those two requirements conflict: Swift Testing
+   cannot import an executable target, so a single target holding `@main` would
+   make the four required test files unbuildable. The entry point therefore sits
+   in a thin executable target that depends on the library. The module, the
+   product and the shipped binary all keep the names §5 gives them, and nothing
+   else moved.
+2. **`app-windows/Installer/RunnerForge.wxs`** — the WiX source for the MSI. §5
+   predates the instruction to package the apps as an MSI and a DMG; the macOS
+   half needed no new file because `build.sh` was already in the tree.

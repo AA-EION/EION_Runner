@@ -290,8 +290,9 @@ not evidence; its contents are.
 | WiX | 5.0.2 |
 | `RunnerForge.msi` | **56,680,448 bytes** |
 | MSI `File` table | **24 rows** |
-| Current head | [34571310000](https://github.com/AA-EION/EION_Runner/actions/runs/34571310000), commit `e83159b`, green — 79 tests, exe 62,996,936 B, MSI 56,678,091 B |
-| **The app opens a window** | `window handle: 393296`, `window title: Runner Forge`, and **no error line in the startup log** — run 34571310000, step 10 |
+| Current head | [34574127156](https://github.com/AA-EION/EION_Runner/actions/runs/34574127156), commit `b85af4b`, green — 84 tests |
+| **The app opens a window** | run 34574127156, step 10 — `window title: Runner Forge`, **no error line in the startup log**, and the log naming its own build |
+| **The app opens a window AGAIN** | `second launch opened window 327790 with no errors` — the run that has a config already |
 
 The last row is the one that matters most, and it is new. Every run before
 [34570056314](https://github.com/AA-EION/EION_Runner/actions/runs/34570056314)
@@ -306,6 +307,15 @@ TROUBLESHOOTING #19 and #20.
 It now launches the built app, waits for a real titled top-level window, and
 then **reads the app's own log and fails on any error line** — because an open
 window is not proof either.
+
+Then it launches it **a second time**. Every launch CI had ever performed was a
+first run, on a machine that had never seen the app, because a GitHub runner is
+fresh every time. The failure reported from a real desktop was on the *second*
+run: the app wrote a default `forge.json` and then refused to read it back
+(TROUBLESHOOTING #22). No number of first runs could have caught that. The
+second launch must open a window, stay up and log no errors, and the step
+asserts the config file exists first so the check cannot pass by proving
+nothing.
 
 The `File` table, read out of the MSI itself rather than assumed:
 
@@ -386,7 +396,7 @@ from a real Apple Silicon macOS 26 runner.
 | `RunnerForge-app.tar` | 3,141,120 bytes |
 | App inside the mounted DMG | 3,096 KB |
 | Re-verified after the §5 tree refactor | [34551453059](https://github.com/AA-EION/EION_Runner/actions/runs/34551453059), commit `966293c`, green |
-| Current head | [34571614106](https://github.com/AA-EION/EION_Runner/actions/runs/34571614106), commit `764808d`, green — 44 tests in 4 suites |
+| Current head | [34574127273](https://github.com/AA-EION/EION_Runner/actions/runs/34574127273), commit `b85af4b`, green — 47 tests in 4 suites, and the app launched twice |
 | **The app launches and logs no errors** | run 34571614106, step 9 — the binary is run directly, is alive after 10 s, and its own log is read back |
 
 The log the smoke test reads back, in full, is the evidence that the app got

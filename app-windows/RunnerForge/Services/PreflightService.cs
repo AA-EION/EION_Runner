@@ -243,24 +243,60 @@ public sealed class PreflightService(
                                              + @"%LOCALAPPDATA%\Docker\log.txt.",
                                    BlocksClasses = ["win-build", "linux-util"] };
 
+    /// <summary>
+    /// Whether both container engines are usable — NOT whether one particular
+    /// mode is currently selected.
+    /// </summary>
+    /// <remarks>
+    /// This used to Fail, and block win-build, whenever Docker Desktop happened
+    /// to be pointed at the Linux engine, with a Fix that switched the whole
+    /// machine to Windows containers. That was wrong twice over. It made a
+    /// transient, one-click setting look like a missing prerequisite; and its
+    /// Fix broke the OTHER class on the same machine, because linux-util needs
+    /// the engine it was switching away from.
+    ///
+    /// What is actually true: Docker Desktop points its CLI endpoint at one
+    /// daemon at a time, but SWITCHING DOES NOT STOP RUNNING CONTAINERS. So
+    /// win-build and linux-util can both be running; they simply cannot be
+    /// started through one endpoint at one moment. The supervisor selects the
+    /// engine each class needs when it starts that class, so the engine
+    /// selected right now is a prerequisite for nothing and this check does not
+    /// block.
+    /// </remarks>
     private static PreflightCheck CheckWindowsContainerMode(DockerStatus status)
     {
         if (!status.DaemonReachable)
         {
-            return new PreflightCheck { Name = "Docker in Windows containers mode",
-                                        Status = PreflightStatus.Warn,
+            return new PreflightCheck { Name = "Container engines", Status = PreflightStatus.Warn,
                                         Detail = "cannot tell: the daemon is not answering" };
         }
 
-        return status.OsType == "windows"
-            ? new PreflightCheck { Name = "Docker in Windows containers mode",
-                                   Status = PreflightStatus.Pass, Detail = "OSType=windows" }
-            : new PreflightCheck { Name = "Docker in Windows containers mode",
-                                   Status = PreflightStatus.Fail,
-                                   Detail = $"OSType={status.OsType}. win-build is a Windows container and "
-                                            + "cannot run on the Linux engine.",
-                                   FixHint = @"""%ProgramFiles%\Docker\Docker\DockerCli.exe"" -SwitchWindowsEngine",
-                                   AutoFixable = true, BlocksClasses = ["win-build"] };
+        string selected = status.OsType ?? "unknown";
+
+        if (!DockerService.CanSwitchEngines)
+        {
+            // Without DockerCli.exe nothing can move the endpoint, so whichever
+            // engine is selected really is the only one available, and the class
+            // needing the other one really is blocked.
+            return new PreflightCheck
+            {
+                Name = "Container engines",
+                Status = PreflightStatus.Fail,
+                Detail = $"only the {selected} engine is available: DockerCli.exe was not found, so the "
+                         + "engine cannot be switched.",
+                FixHint = "Install Docker Desktop, which ships DockerCli.exe and both engines. "
+                          + "Docker Engine on its own serves one platform.",
+                BlocksClasses = selected == "windows" ? ["linux-util"] : ["win-build"],
+            };
+        }
+
+        return new PreflightCheck
+        {
+            Name = "Container engines",
+            Status = PreflightStatus.Pass,
+            Detail = $"both available; {selected} is selected now. Runner Forge switches per class when it "
+                     + "starts one, and switching does not stop containers that are already running.",
+        };
     }
 
     private async Task<PreflightCheck> CheckWslAsync(CancellationToken cancellationToken)

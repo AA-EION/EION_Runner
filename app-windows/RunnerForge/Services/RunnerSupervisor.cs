@@ -108,6 +108,36 @@ public sealed class RunnerSupervisor(
             return;
         }
 
+        // ---------------------------------------------------------------
+        // Select the engine this class needs, per start.
+        //
+        // Docker Desktop points its CLI endpoint at one daemon at a time, so
+        // win-build (a Windows container) and linux-util (a Linux one) cannot be
+        // STARTED through the same endpoint at the same moment. They can however
+        // both be RUNNING: switching the endpoint does not stop containers that
+        // are already up.
+        //
+        // So the engine is chosen here, at the moment of starting a class,
+        // rather than demanded as a machine-wide mode the user has to set
+        // before anything works. Starting linux-util after win-build leaves
+        // win-build running.
+        // ---------------------------------------------------------------
+        if (runnerClass.Isolation is RunnerIsolation.WindowsContainer or RunnerIsolation.LinuxContainer)
+        {
+            DockerService.DockerEngine engine = runnerClass.Isolation == RunnerIsolation.WindowsContainer
+                ? DockerService.DockerEngine.Windows
+                : DockerService.DockerEngine.Linux;
+
+            if (!await _dockerService.EnsureEngineAsync(engine, cancellationToken).ConfigureAwait(false))
+            {
+                _logBus.Error("supervisor",
+                    $"cannot start {runnerClass.ClassId}: the {engine} container engine could not be "
+                    + "selected. In Docker Desktop, check that Windows containers are available "
+                    + "(Settings → General) and that the daemon is running.");
+                return;
+            }
+        }
+
         int replicas = runnerClass.ReplicasAreFixed ? 1 : runnerConfig.Replicas;
 
         for (int index = 0; index < replicas; index++)

@@ -751,6 +751,71 @@ actually means "not ready". `VirtualizationFirmwareEnabled == false` and
 check that fires on working machines is worse than no check: it sends people to
 fix things that are not broken, and it teaches them to ignore the page.
 
+
+## 24. "Docker in Windows containers mode" blocked win-build — and its Fix broke linux-util
+
+**Symptom** — Preflight failed with:
+
+```
+Fail   Docker in Windows containers mode
+       OSType=linux. win-build is a Windows container and cannot run on the
+       Linux engine.                                              [Fix]
+```
+
+and the Fix ran `DockerCli.exe -SwitchWindowsEngine`.
+
+**Why this was wrong.** Runner Forge declares **both** `win-build`
+(`WindowsContainer`) and `linux-util` (`LinuxContainer`) as `RunsOnWindows`, so
+one PC is meant to host both. But the check demanded a single machine-wide mode,
+and its own Fix switched the whole machine to the engine that `linux-util`
+cannot use. **The app's remedy for one class broke the other.**
+
+**What is actually true about Docker Desktop.** It runs two daemons — the
+Windows container engine, and the Linux one in WSL2 — but the CLI endpoint
+(`npipe:////./pipe/docker_engine`) points at exactly one at a time. There is no
+supported way to address both through one endpoint; LCOW, which once allowed
+it, was experimental and has been removed.
+
+The fact the original design missed:
+
+> **Switching engines does not stop running containers.**
+
+Containers started under one engine keep running while the CLI is pointed at the
+other. So a machine genuinely *can* host `win-build` and `linux-util`
+simultaneously. What it cannot do is **start or inspect** both through one
+endpoint at one moment.
+
+**Fix — the engine is a per-operation concern, not a mode the user sets up
+front.**
+
+- `DockerService.EnsureEngineAsync(engine)` selects an engine, switching only
+  when needed and waiting for the daemon to answer again (the switch restarts
+  the endpoint, so the first command after it can otherwise fail spuriously).
+- `RunnerSupervisor.StartClassAsync` selects the engine that class needs at the
+  moment it starts it. Starting `linux-util` after `win-build` leaves
+  `win-build` running.
+- The Preflight check no longer reports a mode. It reports whether **both**
+  engines are usable, and only Fails when `DockerCli.exe` is absent — because
+  then the endpoint genuinely cannot move and the class needing the other engine
+  genuinely is blocked.
+
+**The consequence that is easy to miss.** A single `docker ps` sees only the
+selected engine. A reap performed while Windows containers are selected would
+report "clean" while a Linux container held a live runner still registered with
+GitHub — exactly the stray state the Reaper exists to prevent. So `Stray` now
+records which engine holds each container; the scan visits both; and removal is
+grouped by engine, because `docker rm` against the wrong daemon reports
+"No such container" and leaves it running.
+
+Scanning the second engine costs a switch, so it is only done when the machine
+is configured to run containers of both kinds.
+
+**The general rule.** When a tool has a global mode, check whether the thing you
+actually need is *the mode* or *an operation performed under it*. Requiring the
+mode makes it a prerequisite the user must satisfy, forever, for everything —
+and if two features need opposite modes, the requirement is not merely annoying,
+it is unsatisfiable.
+
 _More entries are added as failures are encountered. An entry is only added here
 once it has actually been hit — this file is a log, not a list of things that
 might go wrong._

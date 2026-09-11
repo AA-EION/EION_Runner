@@ -60,7 +60,7 @@ public sealed class AppServices
         DockerService = new DockerService(LogBus, ProcessRunner);
         GitHubAppService = new GitHubAppService(LogBus, SecretStore, HttpClient);
         GitHubActionsService = new GitHubActionsService(LogBus, GitHubAppService, HttpClient);
-        ReaperService = new ReaperService(LogBus, ProcessRunner);
+        ReaperService = new ReaperService(LogBus, ProcessRunner, DockerService);
         SweeperService = new SweeperService(LogBus, ProcessRunner);
         PreflightService = new PreflightService(LogBus, ProcessRunner, DockerService, HttpClient);
         SigningService = new SigningService(LogBus, ProcessRunner, SecretStore);

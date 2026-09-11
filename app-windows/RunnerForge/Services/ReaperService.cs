@@ -16,7 +16,17 @@ public enum ReaperResult
     StraysSurvived = 20,
 }
 
-public sealed record Stray(string Kind, string Name, int? ProcessId, string Detail);
+/// <summary>
+/// Something alive that should not be.
+/// </summary>
+/// <param name="Engine">
+/// For a container, the Docker engine holding it. Docker Desktop points its CLI
+/// at one daemon at a time, so a container can only be removed while ITS engine
+/// is selected — removing it from the wrong one silently does nothing.
+/// </param>
+public sealed record Stray(
+    string Kind, string Name, int? ProcessId, string Detail,
+    DockerService.DockerEngine? Engine = null);
 
 /// <summary>
 /// "Verify nothing keeps running."
@@ -27,10 +37,11 @@ public sealed record Stray(string Kind, string Name, int? ProcessId, string Deta
 /// apart matters because "is it running?" and "can I delete it?" have different
 /// answers and different blast radii.
 /// </remarks>
-public sealed class ReaperService(LogBus logBus, ProcessRunner processRunner)
+public sealed class ReaperService(LogBus logBus, ProcessRunner processRunner, DockerService dockerService)
 {
     private readonly LogBus _logBus = logBus;
     private readonly ProcessRunner _processRunner = processRunner;
+    private readonly DockerService _dockerService = dockerService;
 
     /// <summary>
     /// Processes that must not exist outside a live, registered job. MSBuild and
@@ -95,25 +106,82 @@ public sealed class ReaperService(LogBus logBus, ProcessRunner processRunner)
             finally { process.Dispose(); }
         }
 
-        // Containers still running whose job has ended.
-        ProcessResult running = await _processRunner.RunAsync(
-            "docker", ["ps", "--filter", "status=running", "--format", "{{.ID}} {{.Names}}"],
-            logSource: "reaper", streamOutput: false, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        foreach (string line in running.StandardOutput
-                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        // ---------------------------------------------------------------
+        // Containers still running whose job has ended — ON BOTH ENGINES.
+        //
+        // A single `docker ps` sees only the engine the CLI is currently pointed
+        // at. Because this machine can host win-build (Windows containers) and
+        // linux-util (Linux containers) at the same time, a scan of one engine
+        // reports "clean" while the other holds a live runner still registered
+        // with GitHub. That is precisely the stray state this class exists to
+        // make impossible.
+        //
+        // Switching engines is not free, so the other engine is only visited
+        // when this machine actually runs both kinds.
+        // ---------------------------------------------------------------
+        foreach (DockerService.DockerEngine engine in EnginesToScan(config))
         {
-            string[] parts = line.Split(' ', 2);
-            if (parts.Length < 2) continue;
-            string containerName = parts[1];
+            if (!await _dockerService.EnsureEngineAsync(engine, cancellationToken).ConfigureAwait(false))
+            {
+                _logBus.Warning("reaper",
+                    $"could not select the {engine} engine; containers it holds are NOT accounted for");
+                continue;
+            }
 
-            if (!containerName.StartsWith("forge-", StringComparison.Ordinal)) continue;
-            if (liveRunnerNames.Any(live => containerName.Contains(live, StringComparison.Ordinal))) continue;
+            ProcessResult running = await _processRunner.RunAsync(
+                "docker", ["ps", "--filter", "status=running", "--format", "{{.ID}} {{.Names}}"],
+                logSource: "reaper", streamOutput: false, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
 
-            strays.Add(new Stray("container", containerName, null, $"container {containerName} ({parts[0]})"));
+            foreach (string line in running.StandardOutput
+                         .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string[] parts = line.Split(' ', 2);
+                if (parts.Length < 2) continue;
+                string containerName = parts[1];
+
+                if (!containerName.StartsWith("forge-", StringComparison.Ordinal)) continue;
+                if (liveRunnerNames.Any(live => containerName.Contains(live, StringComparison.Ordinal))) continue;
+
+                strays.Add(new Stray(
+                    "container", containerName, null,
+                    $"container {containerName} ({parts[0]}) on the {engine} engine", engine));
+            }
         }
 
         return strays;
+    }
+
+    /// <summary>
+    /// Which engines a reap has to look at on this machine.
+    /// </summary>
+    /// <remarks>
+    /// Always the one already selected, since that costs nothing. The other only
+    /// when this machine is configured to run containers of both kinds — a
+    /// switch takes seconds, and paying it on every reap of a Linux-only
+    /// machine would make closing the app noticeably slower for no benefit.
+    /// </remarks>
+    private IReadOnlyList<DockerService.DockerEngine> EnginesToScan(ForgeConfig config)
+    {
+        bool windows = config.Runners.Any(r =>
+            r.Enabled && RunnerClass.All.Any(c =>
+                c.ClassId == r.ClassId && c.Isolation == RunnerIsolation.WindowsContainer));
+
+        bool linux = config.Runners.Any(r =>
+            r.Enabled && RunnerClass.All.Any(c =>
+                c.ClassId == r.ClassId && c.Isolation == RunnerIsolation.LinuxContainer));
+
+        if (windows && linux && DockerService.CanSwitchEngines)
+        {
+            return [DockerService.DockerEngine.Windows, DockerService.DockerEngine.Linux];
+        }
+
+        if (windows && DockerService.CanSwitchEngines) return [DockerService.DockerEngine.Windows];
+        if (linux && DockerService.CanSwitchEngines) return [DockerService.DockerEngine.Linux];
+
+        // Nothing containerised is configured, or the engine cannot be moved:
+        // scan whatever is selected, without switching.
+        return [DockerService.DockerEngine.Linux];
     }
 
     /// <summary>
@@ -170,10 +238,27 @@ public sealed class ReaperService(LogBus logBus, ProcessRunner processRunner)
             catch (Exception) { }
         }
 
-        foreach (Stray stray in strays.Where(s => s.Kind == "container"))
+        // Grouped by engine, because `docker rm` only reaches the daemon the CLI
+        // is pointed at. Removing a Linux container while the Windows engine is
+        // selected reports "No such container" and leaves it running.
+        foreach (IGrouping<DockerService.DockerEngine?, Stray> group in
+                 strays.Where(s => s.Kind == "container").GroupBy(s => s.Engine))
         {
-            await _processRunner.RunAsync("docker", ["rm", "-f", stray.Name],
-                logSource: "reaper", streamOutput: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (group.Key is not null
+                && !await _dockerService.EnsureEngineAsync(group.Key.Value, cancellationToken).ConfigureAwait(false))
+            {
+                _logBus.Error("reaper",
+                    $"could not select the {group.Key} engine; "
+                    + $"{group.Count()} container(s) could not be removed");
+                continue;
+            }
+
+            foreach (Stray stray in group)
+            {
+                await _processRunner.RunAsync("docker", ["rm", "-f", stray.Name],
+                    logSource: "reaper", streamOutput: false, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);

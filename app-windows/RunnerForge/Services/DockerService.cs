@@ -37,24 +37,164 @@ public sealed class DockerService(LogBus logBus, ProcessRunner processRunner)
             parts.ElementAtOrDefault(0), parts.ElementAtOrDefault(1));
     }
 
-    /// <summary>Switches Docker Desktop to the Windows engine.</summary>
-    public async Task<bool> SwitchToWindowsContainersAsync(CancellationToken cancellationToken = default)
-    {
-        string dockerCli = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            "Docker", "Docker", "DockerCli.exe");
+    // -----------------------------------------------------------------------
+    // Engines.
+    //
+    // Docker Desktop on Windows runs two daemons — the Windows container engine
+    // and the Linux one in WSL2 — but the CLI endpoint
+    // (npipe:////./pipe/docker_engine) points at exactly ONE of them at a time.
+    // There is no supported way to address both through the same endpoint;
+    // LCOW, which once allowed it, was experimental and is gone.
+    //
+    // The fact that makes this workable, and that the old design missed:
+    // SWITCHING DOES NOT STOP RUNNING CONTAINERS. Containers started under one
+    // engine keep running while the CLI is pointed at the other. So a machine
+    // CAN host win-build and linux-util at the same time. What it cannot do is
+    // START or INSPECT both through one endpoint at one moment.
+    //
+    // Therefore the engine is a per-operation concern, not a machine-wide mode
+    // the user has to set up front. Each class selects the engine it needs at
+    // the moment it starts, and anything that enumerates containers has to ask
+    // both engines rather than whichever one happens to be selected.
+    // -----------------------------------------------------------------------
 
-        if (!File.Exists(dockerCli))
+    /// <summary>Which of Docker Desktop's two daemons an operation needs.</summary>
+    public enum DockerEngine { Windows, Linux }
+
+    private static string DockerCliPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        "Docker", "Docker", "DockerCli.exe");
+
+    /// <summary>True when this machine has the switching tool Docker Desktop ships.</summary>
+    public static bool CanSwitchEngines => File.Exists(DockerCliPath);
+
+    /// <summary>Switches Docker Desktop to the Windows engine.</summary>
+    public Task<bool> SwitchToWindowsContainersAsync(CancellationToken cancellationToken = default) =>
+        SwitchEngineAsync(DockerEngine.Windows, cancellationToken);
+
+    /// <summary>Points the CLI endpoint at one of the two daemons.</summary>
+    public async Task<bool> SwitchEngineAsync(
+        DockerEngine engine, CancellationToken cancellationToken = default)
+    {
+        if (!CanSwitchEngines)
         {
-            _logBus.Error("docker", $"DockerCli.exe not found at {dockerCli}");
+            _logBus.Error("docker", $"DockerCli.exe not found at {DockerCliPath}");
             return false;
         }
 
+        string flag = engine == DockerEngine.Windows ? "-SwitchWindowsEngine" : "-SwitchLinuxEngine";
+
         ProcessResult result = await _processRunner.RunAsync(
-            dockerCli, ["-SwitchWindowsEngine"], logSource: "docker", cancellationToken: cancellationToken)
+            DockerCliPath, [flag], logSource: "docker", cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         return result.Succeeded;
+    }
+
+    /// <summary>
+    /// Makes the given engine the selected one, switching only if it is not
+    /// already, and waiting for the daemon to answer again afterwards.
+    /// </summary>
+    /// <remarks>
+    /// The switch restarts the endpoint, so the first command after it can fail
+    /// with "the docker daemon is not running" even though the switch worked.
+    /// Polling until it answers turns that race into a wait.
+    /// </remarks>
+    public async Task<bool> EnsureEngineAsync(
+        DockerEngine engine, CancellationToken cancellationToken = default)
+    {
+        string wanted = engine == DockerEngine.Windows ? "windows" : "linux";
+
+        DockerStatus status = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (status.DaemonReachable && status.OsType == wanted) return true;
+
+        _logBus.Info("docker",
+            $"selecting the {wanted} engine (currently {status.OsType ?? "unreachable"}). "
+            + "Containers already running under the other engine keep running.");
+
+        if (!await SwitchEngineAsync(engine, cancellationToken).ConfigureAwait(false)) return false;
+
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+
+            status = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            if (status.DaemonReachable && status.OsType == wanted)
+            {
+                _logBus.Info("docker", $"the {wanted} engine is answering");
+                return true;
+            }
+        }
+
+        _logBus.Error("docker", $"the {wanted} engine did not come up within 60s");
+        return false;
+    }
+
+    /// <summary>
+    /// Container names across BOTH engines, with the engine that holds each.
+    /// </summary>
+    /// <remarks>
+    /// The Reaper and the Sweeper must use this rather than ListContainersAsync.
+    /// A single `docker ps` sees only the selected engine, so a reap performed
+    /// in Windows mode would silently leave every Linux container behind —
+    /// exactly the stray state the Reaper exists to prevent.
+    ///
+    /// The engine selected on entry is restored on exit, so this is invisible to
+    /// anything else in flight.
+    /// </remarks>
+    public async Task<IReadOnlyList<(string Name, DockerEngine Engine)>> ListContainersAcrossEnginesAsync(
+        string? statusFilter = null, CancellationToken cancellationToken = default)
+    {
+        var found = new List<(string, DockerEngine)>();
+
+        DockerStatus initial = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (!initial.DaemonReachable) return found;
+
+        DockerEngine? restore = initial.OsType switch
+        {
+            "windows" => DockerEngine.Windows,
+            "linux" => DockerEngine.Linux,
+            _ => null,
+        };
+
+        // Without the switching tool there is only ever one reachable engine, so
+        // report that one rather than pretending to have looked at both.
+        if (!CanSwitchEngines)
+        {
+            foreach (string name in await ListContainersAsync(statusFilter, cancellationToken).ConfigureAwait(false))
+            {
+                found.Add((name, restore ?? DockerEngine.Linux));
+            }
+            return found;
+        }
+
+        try
+        {
+            foreach (DockerEngine engine in (DockerEngine[])[DockerEngine.Windows, DockerEngine.Linux])
+            {
+                if (!await EnsureEngineAsync(engine, cancellationToken).ConfigureAwait(false))
+                {
+                    _logBus.Warning("docker",
+                        $"could not select the {engine} engine while enumerating containers; "
+                        + "anything it holds is not listed here");
+                    continue;
+                }
+
+                foreach (string name in await ListContainersAsync(statusFilter, cancellationToken).ConfigureAwait(false))
+                {
+                    found.Add((name, engine));
+                }
+            }
+        }
+        finally
+        {
+            if (restore is not null)
+            {
+                await EnsureEngineAsync(restore.Value, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return found;
     }
 
     /// <summary>

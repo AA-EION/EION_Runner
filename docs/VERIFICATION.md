@@ -290,7 +290,7 @@ not evidence; its contents are.
 | WiX | 5.0.2 |
 | `RunnerForge.msi` | **56,680,448 bytes** |
 | MSI `File` table | **24 rows** |
-| Current head | [34551647995](https://github.com/AA-EION/EION_Runner/actions/runs/34551647995), commit `39a3285`, green — msi 56,655,809 B, programfiles 57,627,471 B, testresults 14,518 B |
+| Current head | [34569170694](https://github.com/AA-EION/EION_Runner/actions/runs/34569170694), commit `621c768`, green — including the 6 new signing tests |
 
 The `File` table, read out of the MSI itself rather than assumed:
 
@@ -371,7 +371,7 @@ from a real Apple Silicon macOS 26 runner.
 | `RunnerForge-app.tar` | 3,141,120 bytes |
 | App inside the mounted DMG | 3,096 KB |
 | Re-verified after the §5 tree refactor | [34551453059](https://github.com/AA-EION/EION_Runner/actions/runs/34551453059), commit `966293c`, green |
-| Current head | [34551647956](https://github.com/AA-EION/EION_Runner/actions/runs/34551647956), commit `39a3285`, green — `RunnerForge-macos-dmg` 1,193,845 B, `RunnerForge-macos-app` 814,686 B |
+| Current head | [34569279916](https://github.com/AA-EION/EION_Runner/actions/runs/34569279916), commit `937c4f6`, green — dmg 1,248,486 B, app 862,184 B, including the 6 new signing tests |
 
 The bundle, asserted rather than assumed:
 

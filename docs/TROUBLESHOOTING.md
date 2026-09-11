@@ -181,5 +181,217 @@ A related trap: building the test with `juce_add_console_app` defines
 unit. A plain `add_executable` avoids the collision.
 
 
+---
+
+## 8. A PowerShell script parameter named `-Input` silently arrives empty
+
+**Symptom** — `sign-aax-ilok.ps1 -Input foo.aaxplugin` runs, prints no error, and then
+behaves as if no input was given. `$Input` inside the script is empty, or contains
+something that is not what you passed.
+
+**Cause** — `$Input` is an **automatic variable** in PowerShell: it is the enumerator over
+pipeline input. Declaring `param([string]$Input)` does not produce a parse error; the
+binder simply cannot populate a variable the engine already owns, and you get an empty
+string with no diagnostic at all.
+
+**Fix** — never name a parameter `Input`. This project uses `-InputPath` and
+`-OutputPath`, and the scripts carry a comment saying so, because "simplifying" them back
+to `-Input` re-introduces a failure with no error message. The same applies to `$Args`,
+`$Host`, `$Error` and `$Matches`.
+
+---
+
+## 9. PowerShell renders `"$Name:"` as an empty string
+
+**Symptom** — a log line meant to read `paceAccount: stored` comes out as ` stored`, with
+the name gone.
+
+**Cause** — `$Name:` is parsed as a **scope or provider qualifier**, exactly like
+`$env:PATH` or `$script:count`. PowerShell reads `Name` as the namespace and looks for a
+variable whose name is empty.
+
+**Fix** — brace the variable: `"${Name}:"`. Anywhere a `$variable` is immediately followed
+by a colon inside a double-quoted string, the braces are mandatory.
+
+---
+
+## 10. `dotnet test` on Linux: "No frameworks were found"
+
+**Symptom** — the WPF project *builds* on a Linux development machine, but the tests will
+not run:
+
+```
+You must install or update .NET to run this application.
+Framework: 'Microsoft.WindowsDesktop.App', version '9.0.0' (x64)
+No frameworks were found.
+```
+
+**Cause** — `<EnableWindowsTargeting>true</EnableWindowsTargeting>` makes the Windows
+targeting *packs* restorable on any OS, so the compiler can check the code. It does not
+ship a Windows desktop *runtime*, and there is none for Linux: WPF is Windows-only at
+runtime, by construction.
+
+**Fix** — this is not a bug to work around, and adding `--framework net9.0` or a
+`RuntimeIdentifier` will not help. Compile on Linux to catch C# errors cheaply, and run
+the tests on Windows. `.github/workflows/ci-windows-app.yml` exists for exactly that,
+which is why its `Test` step is not optional and not `continue-on-error`.
+
+---
+
+## 11. `CryptoKit` has no RSA, so the GitHub App JWT will not sign on macOS
+
+**Symptom** — the obvious implementation does not compile:
+
+```
+error: cannot find 'RSA' in scope
+```
+
+…and searching finds `P256`, `P384`, `P521`, `Curve25519` and nothing else.
+
+**Cause** — CryptoKit deliberately exposes no RSA on Apple platforms. It is not an
+omission that a newer SDK fixes. GitHub App JWTs are `RS256`, so ECDSA is not a
+substitute.
+
+**Fix** — use the Security framework, which is the supported RSA path:
+
+```swift
+let key = try Self.secKey(fromPem: privateKeyPem)
+guard let signature = SecKeyCreateSignature(
+    key, .rsaSignatureMessagePKCS1v15SHA256, Data(signingInput.utf8) as CFData, &error
+) as Data? else { throw GitHubError.signingFailed }
+```
+
+One trap inside that: `SecKeyCreateWithData` wants a **PKCS#1** key. A `.pem` that begins
+`-----BEGIN PRIVATE KEY-----` is PKCS#8 and carries a 26-byte header that must be stripped
+first; one beginning `-----BEGIN RSA PRIVATE KEY-----` is already PKCS#1. Feeding PKCS#8
+straight in fails with an opaque `-50` (`errSecParam`).
+
+---
+
+## 12. `windows-latest` cannot find Visual Studio 2022
+
+**Symptom** — a Windows build job dies in under 20 seconds:
+
+```
+CMake Error at CMakeLists.txt: Generator
+  Visual Studio 17 2022
+could not find any instance of Visual Studio.
+```
+
+**Cause** — `windows-latest` is a moving label. It now resolves to Windows Server 2025
+with **Visual Studio 2026** (generator `Visual Studio 18 2026`), so the 2022 generator
+matches nothing on the image.
+
+**Fix** — pin the image: `runs-on: windows-2022`. This is also correct on principle here,
+because the `win-build` container image pins `servercore:ltsc2022` with VS Build Tools
+17.12, and the hosted stage is supposed to mirror the real toolchain rather than drift
+ahead of it. `ubuntu-latest` is pinned to `ubuntu-24.04` for the same reason.
+
+---
+
+## 13. The ARM64 configure fails with "generator platform does not match"
+
+**Symptom** — the x64 build succeeds, then the cross-compiled ARM64 configure fails:
+
+```
+CMake Error: Error: generator platform: ARM64
+Does not match the platform used previously: x64
+... CMake step for juce failed: 1
+```
+
+**Cause** — `FETCHCONTENT_BASE_DIR` holds more than the fetched sources. It also holds
+FetchContent's per-dependency **sub-build** trees, and a sub-build's own CMake cache
+records a generator platform. Sharing that directory between an x64 and an ARM64 configure
+is what collides — sharing the *sources* is fine and is the whole point of the cache.
+
+**Fix** — point each dependency at the tree the first configure already populated, using
+CMake's documented "this dependency is already present" mechanism:
+
+```
+-DFETCHCONTENT_SOURCE_DIR_JUCE="$juce_src"
+-DFETCHCONTENT_SOURCE_DIR_CLAP-JUCE-EXTENSIONS="$clap_src"
+```
+
+ARM64 then gets its own sub-build scaffolding while JUCE is cloned exactly once and both
+architectures compile identical sources. Fail the step explicitly if those source trees are
+absent, rather than letting CMake silently re-clone.
+
+---
+
+## 14. A macOS artifact check passes on Windows and fails on macOS
+
+**Symptom** — `test -f "$plugin"` reports the `.clap` missing on macOS, although it is
+plainly there in the listing.
+
+**Cause** — on macOS **every plugin format is a bundle directory**. The Mach-O lives at
+`<bundle>/Contents/MacOS/<name>`, so `-f` applied to the `.vst3`, `.component` or `.clap`
+path can never be true.
+
+**Fix** — walk `Contents/MacOS/` and assert on the binaries inside, which is a stronger
+check than the one it replaces. Write it for **bash 3.2**: that is still what `/bin/bash`
+is on macOS, and `mapfile`/`readarray` do not exist there.
+
+The same fact drives the artifact contract: `actions/upload-artifact` flattens symlinks,
+and a bundle without its symlinks is no longer a valid bundle, so macOS bundles are
+**tarred** before upload and untarred before assertion.
+
+---
+
+## 15. A gate passes an artifact it should have failed
+
+**Symptom** — an artifact whose manifest entry says `"required": false` is reported as
+required, and the gate's verdict is wrong in a way that is easy to miss.
+
+**Cause** — jq's alternative operator. `.required // true` looks like "default to true",
+but `//` treats `false` **and** `null` as empty, so an explicit `false` is promoted to
+`true`.
+
+**Fix** — ask whether the key exists, never whether its value is falsy:
+
+```bash
+required="$(jq -r ".artifacts[$i] | if has(\"required\") then .required else true end" "$MANIFEST")"
+```
+
+This bug was in the gate itself, which is the worst place for it: a broken gate reports
+success.
+
+---
+
+## 16. `'v26' is unavailable` in Package.swift on a Swift 6.3 toolchain
+
+**Symptom** — `swift build` fails in seconds on a machine with Xcode 26 and Swift 6.3:
+
+```
+Package.swift:19:17: error: 'v26' is unavailable
+note: 'v26' was introduced in PackageDescription 6.2
+```
+
+**Cause** — SwiftPM compiles the manifest against the `PackageDescription` library
+matching the **declared tools version**, not the installed toolchain. The build log shows
+`-package-description-version 6.0.0`. A `// swift-tools-version: 6.0` manifest therefore
+cannot name a platform that 6.2 added, however new the compiler is.
+
+**Fix** — raise the first line to `// swift-tools-version: 6.2`. This is independent of
+`.swiftLanguageMode(.v6)`, which selects the language mode and has nothing to do with which
+manifest API is available.
+
+---
+
+## 17. `packer validate` cannot run on Linux for the macOS image
+
+**Symptom** — `packer init` fails to install the plugin:
+
+```
+error: no compatible binary for linux_amd64
+```
+
+**Cause** — `cirruslabs/tart` builds macOS VMs through Apple's Virtualization framework.
+The plugin ships **darwin-only** binaries, because there is no Linux implementation to
+ship. Compare the release assets: `darwin_arm64` returns 206, `linux_amd64` returns 404.
+
+**Fix** — there is none on Linux, and this is not a defect to route around. The macOS
+image template is syntax-checked on Linux and genuinely validated on the Apple Silicon
+Mac. Any claim that the macOS image is "verified" must come from that machine.
+
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

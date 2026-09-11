@@ -16,7 +16,10 @@ public final class CredentialField: Identifiable {
     public var value: String = ""
     public var isStored: Bool = false
 
-    public var id: String { keyName }
+    // `Identifiable` is a nonisolated protocol, so a main-actor-isolated `id`
+    // cannot satisfy it under Swift 6. `keyName` is an immutable `let` of a
+    // Sendable type, so reading it off the main actor is safe.
+    public nonisolated var id: String { keyName }
 
     public init(keyName: String, displayName: String, help: String, isMultiline: Bool = false) {
         self.keyName = keyName

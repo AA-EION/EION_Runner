@@ -47,9 +47,14 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      # The configuration has to be passed to RESTORE, not only to build.
+      # RunnerForge.csproj sets RuntimeIdentifier=win-x64 in a Release-only
+      # PropertyGroup, so a default (Debug) restore writes a project.assets.json
+      # with no `net9.0-windows/win-x64` target and the Release build then fails
+      # with NETSDK1047.
       - name: Restore
         working-directory: app-windows
-        run: dotnet restore RunnerForge.sln
+        run: dotnet restore RunnerForge.sln -p:Configuration=Release
 
       - name: Build
         working-directory: app-windows

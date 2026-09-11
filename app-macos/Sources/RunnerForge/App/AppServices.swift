@@ -49,8 +49,7 @@ public final class AppServices {
         self.reaperService = reaperService
         self.sweeperService = sweeperService
         self.preflightService = PreflightService(
-            logBus: logBus, processRunner: processRunner, tartService: tartService,
-            secretStore: secretStore)
+            logBus: logBus, processRunner: processRunner, tartService: tartService)
         self.signingService = SigningService(
             logBus: logBus, processRunner: processRunner, secretStore: secretStore)
         self.selfTestService = SelfTestService(

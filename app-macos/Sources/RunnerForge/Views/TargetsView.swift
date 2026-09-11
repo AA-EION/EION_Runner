@@ -66,10 +66,8 @@ public struct TargetsView: View {
                         + "would offer a switch that could not do anything.")
 
                 ForEach(model.classes()) { runnerClass in
-                    ClassRow(runnerClass: runnerClass,
-                             entry: store.runnerConfig(for: runnerClass),
-                             onEnabled: { model.setEnabled(runnerClass, $0) },
-                             onReplicas: { model.setReplicas(runnerClass, $0) })
+                    ClassRow(model: model, runnerClass: runnerClass,
+                             entry: store.runnerConfig(for: runnerClass))
                 }
             }
             .padding(20)
@@ -78,17 +76,21 @@ public struct TargetsView: View {
 }
 
 private struct ClassRow: View {
+    // The model is held rather than two closures because SwiftUI's Binding
+    // setter is `@isolated(any) @Sendable`, and a stored plain function value
+    // converted to it is a data-race warning under Swift 6. A closure written
+    // inline in `body` is already main-actor-isolated, so it converts cleanly.
+    let model: TargetsModel
     let runnerClass: RunnerClass
     let entry: RunnerConfig
-    let onEnabled: (Bool) -> Void
-    let onReplicas: (Int) -> Void
 
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Toggle(runnerClass.displayName, isOn: Binding(
-                        get: { entry.enabled }, set: onEnabled))
+                        get: { entry.enabled },
+                        set: { model.setEnabled(runnerClass, $0) }))
                     .toggleStyle(.switch)
 
                     Spacer()
@@ -101,7 +103,8 @@ private struct ClassRow: View {
 
                 HStack {
                     Text("Replicas")
-                    Stepper(value: Binding(get: { entry.replicas }, set: onReplicas),
+                    Stepper(value: Binding(get: { entry.replicas },
+                                           set: { model.setReplicas(runnerClass, $0) }),
                             in: runnerClass.minReplicas...runnerClass.maxReplicas) {
                         Text("\(entry.replicas)").font(.body.monospaced())
                     }

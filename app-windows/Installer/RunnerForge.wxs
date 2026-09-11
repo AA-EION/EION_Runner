@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runner Forge — Windows installer.
+
+  The published app is a single self-contained RunnerForge.exe, but the product
+  is more than the executable: the scripts and templates it renders and runs are
+  program files too, and they must land next to it. This package harvests the
+  whole publish directory rather than naming files one by one, so a file added
+  to the product cannot be silently left out of the installer.
+
+  Built with WiX v5:
+      wix build Installer\RunnerForge.wxs -d PublishDir=<path> -o RunnerForge.msi
+
+  UpgradeCode is FIXED FOR THE LIFE OF THE PRODUCT. Changing it turns every
+  future release into a second, parallel installation instead of an upgrade.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Runner Forge"
+           Manufacturer="EION Studios"
+           Version="1.0.0.0"
+           UpgradeCode="7B2C4C1E-5A6E-4C0B-9E2F-3D8A1F6B4C90"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Runner Forge is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- 64-bit only. The app publishes win-x64 self-contained; there is no
+         32-bit build to install, so offering a 32-bit location would create a
+         directory nothing is ever written to. -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Runner Forge" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ShortcutFolder" Name="Runner Forge" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Runner Forge" Level="1">
+      <ComponentGroupRef Id="ProgramFilesGroup" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- Harvested, not enumerated. `Files Include` walks the publish directory
+         at build time, which is why adding a script or a template to the
+         product does not also require editing this file. -->
+    <ComponentGroup Id="ProgramFilesGroup" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ShortcutFolder"
+               Guid="1D9F5B84-2C77-4E3A-B0D5-8A4E2F91C6B3">
+      <Shortcut Id="RunnerForgeShortcut"
+                Name="Runner Forge"
+                Description="Turn this PC into clean, containerized, self-hosted GitHub Actions runners."
+                Target="[INSTALLFOLDER]RunnerForge.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveShortcutFolder" Directory="ShortcutFolder" On="uninstall" />
+      <!-- A per-machine component whose only payload is a shortcut still needs a
+           key path, and a registry value under HKMU is the standard one. -->
+      <RegistryValue Root="HKMU"
+                     Key="Software\EION Studios\Runner Forge"
+                     Name="Installed"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

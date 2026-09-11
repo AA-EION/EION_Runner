@@ -1,0 +1,149 @@
+# ---------------------------------------------------------------------------
+# Runner Forge — macOS app CI.
+#
+# Builds the SwiftPM package, runs the Swift Testing suite, assembles
+# RunnerForge.app and wraps it in a DMG.
+#
+# This is the first place the macOS app is ever fully type-checked. The
+# development box is Linux, where `swiftc -parse` proves syntax but cannot
+# resolve SwiftUI, AppKit or Security — so a Linux green light means "this
+# parses", and only this job means "this compiles".
+#
+# The DMG is uploaded directly rather than tarred: a .dmg is a single file, so
+# upload-artifact has no symlinks to flatten. The .app is a different matter and
+# is tarred, because upload-artifact turns a bundle's symlinks into copies and
+# the result is no longer a valid bundle.
+# ---------------------------------------------------------------------------
+name: ci-macos-app
+
+run-name: macOS app · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'app-macos/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - '.github/workflows/ci-macos-app.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        working-directory: app-macos
+        run: swift build -c release
+
+      - name: Test
+        working-directory: app-macos
+        run: swift test
+
+      - name: Assemble the app and the DMG
+        working-directory: app-macos
+        run: ./build.sh --configuration release
+
+      # `codesign --verify` on an ad-hoc signature still proves the bundle is
+      # structurally valid, which is what this gate is for. Distribution signing
+      # needs a Developer ID identity and happens on the signing runner.
+      - name: Assert the bundle is well-formed
+        working-directory: app-macos
+        run: |
+          set -euo pipefail
+          app="dist/RunnerForge.app"
+
+          test -x "$app/Contents/MacOS/RunnerForge" || { echo "no executable in the bundle"; exit 1; }
+          test -f "$app/Contents/Info.plist"        || { echo "no Info.plist in the bundle"; exit 1; }
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist"
+
+          # The resources are program files, not extras: the Export page renders
+          # the templates and the runner classes execute the scripts.
+          test -d "$app/Contents/Resources/scripts"    || { echo "scripts missing from the bundle"; exit 1; }
+          test -d "$app/Contents/Resources/templates"  || { echo "templates missing from the bundle"; exit 1; }
+
+          codesign --verify --verbose=2 "$app"
+
+          echo "--- entitlements as signed ---"
+          codesign --display --entitlements - --xml "$app" |
+            plutil -convert xml1 -o - - | tee /tmp/entitlements.xml
+
+          # App Sandbox must be OFF: the app spawns tart, docker, codesign and
+          # notarytool, none of which a sandboxed process can launch. This
+          # asserts the decision rather than trusting the file.
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' /tmp/entitlements.xml 2>/dev/null | grep -qi true; then
+            echo "App Sandbox is enabled; the app cannot drive tart or docker with it on"
+            exit 1
+          fi
+
+          echo "--- architectures ---"
+          lipo -info "$app/Contents/MacOS/RunnerForge"
+
+      - name: Assert the DMG mounts and carries the app
+        working-directory: app-macos
+        run: |
+          set -euo pipefail
+          dmg="dist/RunnerForge.dmg"
+          ls -l "$dmg"
+
+          hdiutil verify "$dmg"
+          mountpoint="$(mktemp -d)"
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mountpoint"
+          trap 'hdiutil detach "$mountpoint" >/dev/null 2>&1 || true' EXIT
+
+          ls -l "$mountpoint"
+          test -x "$mountpoint/RunnerForge.app/Contents/MacOS/RunnerForge" \
+            || { echo "the DMG does not contain a runnable app"; exit 1; }
+          test -L "$mountpoint/Applications" \
+            || { echo "the DMG has no /Applications drop target"; exit 1; }
+
+          bytes="$(du -sk "$mountpoint/RunnerForge.app" | cut -f1)"
+          echo "app inside the DMG: ${bytes} KB"
+
+      # The .app is tarred and the DMG is not, for the reason in the header.
+      - name: Tar the app bundle
+        working-directory: app-macos
+        run: |
+          set -euo pipefail
+          tar -cf dist/RunnerForge-app.tar -C dist RunnerForge.app
+          ls -l dist/RunnerForge-app.tar
+
+      - name: Upload DMG
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunnerForge-macos-dmg
+          path: app-macos/dist/RunnerForge.dmg
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload the app bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunnerForge-macos-app
+          path: app-macos/dist/RunnerForge-app.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>RunnerForge</string>
+	<key>CFBundleDisplayName</key>
+	<string>Runner Forge</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.runnerforge.app</string>
+	<key>CFBundleExecutable</key>
+	<string>RunnerForge</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Runner Forge. MIT licensed.</string>
+	<!--
+	    Runner Forge is a normal windowed app that ALSO has a menu bar item, so
+	    LSUIElement stays false: hiding the Dock icon would leave a user who
+	    closed the window no way to bring it back.
+	-->
+	<key>LSUIElement</key>
+	<false/>
+	<!--
+	    The app shells out to tart, docker, codesign, notarytool and wraptool.
+	    It does not use the camera, microphone, contacts or location, so no usage
+	    descriptions are declared: declaring one the app never needs is how an
+	    App Review rejection and a pointless consent prompt both start.
+	-->
+</dict>
+</plist>

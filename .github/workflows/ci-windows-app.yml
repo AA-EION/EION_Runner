@@ -1,0 +1,171 @@
+# ---------------------------------------------------------------------------
+# Runner Forge — Windows app CI.
+#
+# Builds RunnerForge.exe, runs the unit tests on a machine that can actually
+# host WPF, publishes the single self-contained file and wraps the whole
+# publish directory in an MSI.
+#
+# The tests deliberately run HERE and not on the Linux development box: a WPF
+# project compiles anywhere with EnableWindowsTargeting, but `dotnet test`
+# needs Microsoft.WindowsDesktop.App at runtime and fails with "No frameworks
+# were found" on Linux. This job is where that check is real.
+#
+# windows-2022 is pinned, not `windows-latest`. `windows-latest` moved to Server
+# 2025 with Visual Studio 2026, and builds that expect the VS 2022 toolset fail
+# there with "could not find any instance of Visual Studio".
+# ---------------------------------------------------------------------------
+name: ci-windows-app
+
+run-name: Windows app · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'app-windows/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - '.github/workflows/ci-windows-app.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-windows-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        working-directory: app-windows
+        run: dotnet restore RunnerForge.sln
+
+      - name: Build
+        working-directory: app-windows
+        run: dotnet build RunnerForge.sln -c Release --no-restore
+
+      - name: Test
+        working-directory: app-windows
+        run: dotnet test RunnerForge.sln -c Release --no-build --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Publish single file
+        working-directory: app-windows
+        run: dotnet publish RunnerForge/RunnerForge.csproj -c Release -r win-x64 -o publish
+
+      # The publish gate: PublishSingleFile is only honoured when nothing in the
+      # project opts out of it, and a silently-multi-file publish would still
+      # run here while failing on a machine with no .NET installed.
+      - name: Assert the publish is a single self-contained file
+        shell: pwsh
+        working-directory: app-windows
+        run: |
+          $exe = Join-Path publish 'RunnerForge.exe'
+          if (-not (Test-Path $exe)) { throw "RunnerForge.exe was not published" }
+
+          $loose = Get-ChildItem publish -File |
+                   Where-Object { $_.Extension -notin '.exe', '.pdb' }
+          if ($loose) {
+            $loose | ForEach-Object { Write-Host "unexpected loose file: $($_.Name)" }
+            throw "publish produced $($loose.Count) loose file(s); PublishSingleFile did not take effect"
+          }
+
+          $size = (Get-Item $exe).Length
+          Write-Host "RunnerForge.exe = $size bytes"
+          if ($size -lt 20MB) { throw "RunnerForge.exe is $size bytes; a self-contained publish is far larger" }
+
+      # The scripts and templates are program files, not extras: the Export page
+      # renders the templates and the runner classes execute the scripts. They
+      # ship inside the MSI alongside the executable.
+      - name: Stage scripts and templates into the publish directory
+        shell: pwsh
+        working-directory: app-windows
+        run: |
+          New-Item -ItemType Directory -Force -Path publish\scripts, publish\templates | Out-Null
+          Copy-Item ..\scripts\*.ps1 publish\scripts\ -Force
+          Copy-Item ..\scripts\*.sh  publish\scripts\ -Force
+          Copy-Item ..\templates\*.tmpl publish\templates\ -Force
+          Copy-Item ..\versions.toml publish\ -Force
+          Get-ChildItem publish -Recurse -File | Measure-Object -Property Length -Sum |
+            ForEach-Object { Write-Host "publish payload: $($_.Count) file(s), $($_.Sum) bytes" }
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        working-directory: app-windows
+        run: |
+          $publish = (Resolve-Path publish).Path
+          wix build Installer\RunnerForge.wxs -d PublishDir="$publish" -arch x64 -o RunnerForge.msi
+          if (-not (Test-Path RunnerForge.msi)) { throw "wix build produced no MSI" }
+          $size = (Get-Item RunnerForge.msi).Length
+          Write-Host "RunnerForge.msi = $size bytes"
+          if ($size -lt 10MB) { throw "RunnerForge.msi is only $size bytes; it cannot contain the payload" }
+
+      # Proves the MSI actually carries the payload rather than merely existing.
+      # An MSI with an empty File table installs cleanly and delivers nothing.
+      - name: Assert the MSI carries the program files
+        shell: pwsh
+        working-directory: app-windows
+        run: |
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.GetType().InvokeMember(
+            'OpenDatabase', 'InvokeMethod', $null, $installer, @((Resolve-Path RunnerForge.msi).Path, 0))
+          $view = $db.GetType().InvokeMember(
+            'OpenView', 'InvokeMethod', $null, $db, @("SELECT ``FileName``, ``FileSize`` FROM ``File``"))
+          $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+
+          $names = @()
+          while ($true) {
+            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if (-not $record) { break }
+            $name = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
+            $size = $record.GetType().InvokeMember('IntegerData', 'GetProperty', $null, $record, @(2))
+            $names += $name
+            Write-Host ("  {0,-40} {1} bytes" -f $name, $size)
+          }
+
+          Write-Host "MSI File table: $($names.Count) row(s)"
+          if ($names.Count -lt 5) { throw "MSI holds only $($names.Count) file(s); the harvest did not run" }
+          if (-not ($names -match 'RunnerForge\.exe')) { throw "MSI does not contain RunnerForge.exe" }
+
+      - name: Upload MSI
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunnerForge-windows-msi
+          path: app-windows/RunnerForge.msi
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload the published program files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunnerForge-windows-programfiles
+          path: app-windows/publish/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunnerForge-windows-testresults
+          path: app-windows/TestResults/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

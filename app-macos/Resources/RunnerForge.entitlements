@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	    APP SANDBOX IS DELIBERATELY OFF.
+
+	    Runner Forge's entire job is to drive other programs: it launches `tart`
+	    to clone and boot macOS VMs, `docker` to run containers, the GitHub
+	    Actions runner binary, `codesign`, `notarytool`, `wraptool` and
+	    `caffeinate`. A sandboxed process cannot fork arbitrary executables, cannot
+	    reach the Virtualization framework through another process, and cannot
+	    read or write the runner work directories those tools create outside its
+	    container. There is no entitlement that grants "run any tool the user
+	    installed"; the sandbox is simply the wrong shape for this product.
+
+	    Hardened Runtime IS on (enabled at codesign time with the codesign "options runtime" flag),
+	    which is what notarization requires. The exceptions below are the minimum
+	    the Hardened Runtime needs for a process whose purpose is to spawn other
+	    processes.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+
+	<!--
+	    The GitHub Actions runner ships its own .NET runtime, which JIT-compiles.
+	    Without this, the runner process the app launches is killed on first JIT.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+
+	<!--
+	    tart, docker and the runner are third-party binaries signed by their own
+	    teams. Without this, launching them from a Hardened Runtime process fails
+	    library validation.
+	-->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+
+	<!--
+	    Secrets are handed to child processes through their environment. The
+	    Hardened Runtime otherwise scrubs DYLD_* and restricts inherited
+	    environment for signed children.
+	-->
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+</dict>
+</plist>

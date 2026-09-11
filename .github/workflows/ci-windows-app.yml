@@ -123,6 +123,24 @@ jobs:
         working-directory: app-windows
         timeout-minutes: 3
         run: |
+          # A failure here has to say WHERE it died, not just that it did. The
+          # app writes a durable log precisely so this is answerable.
+          function Show-Diagnostics {
+            $log = Join-Path $env:LOCALAPPDATA 'RunnerForge\runnerforge.log'
+            Write-Host ''
+            Write-Host "--- $log ---"
+            if (Test-Path $log) { Get-Content $log } else { Write-Host '(the app never wrote a log line)' }
+
+            Write-Host ''
+            Write-Host '--- Application event log, last 10 entries ---'
+            Get-WinEvent -LogName Application -MaxEvents 10 -ErrorAction SilentlyContinue |
+              Where-Object { $_.Message -match 'RunnerForge|\.NET Runtime|Application Error' } |
+              ForEach-Object { Write-Host "[$($_.TimeCreated)] $($_.ProviderName)"; Write-Host $_.Message }
+
+            Write-Host ''
+            Write-Host "--- session: $((Get-Process -Id $PID).SessionId) ---"
+          }
+
           $exe = (Resolve-Path 'publish\RunnerForge.exe').Path
           Write-Host "launching $exe"
 
@@ -136,8 +154,16 @@ jobs:
             $process.Refresh()
 
             if ($process.HasExited) {
-              throw ("RunnerForge.exe exited after $([int]((Get-Date) - $process.StartTime).TotalSeconds)s " +
-                     "with code $($process.ExitCode) instead of opening a window.")
+              $seconds = [int]((Get-Date) - $process.StartTime).TotalSeconds
+              $code = $process.ExitCode
+              Write-Host "RunnerForge.exe exited after ${seconds}s with code $code."
+              # 0xC0000005 as a signed int. Naming it beats making the reader
+              # convert it, and it is by far the most likely code to see here.
+              if ($code -eq -1073741819) {
+                Write-Host 'That is 0xC0000005, STATUS_ACCESS_VIOLATION.'
+              }
+              Show-Diagnostics
+              throw "RunnerForge.exe exited after ${seconds}s with code $code instead of opening a window."
             }
 
             if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -150,6 +176,7 @@ jobs:
           if ($handle -eq [IntPtr]::Zero) {
             # Kill it before failing, or the runner waits on the drain in OnExit.
             $process | Stop-Process -Force -ErrorAction SilentlyContinue
+            Show-Diagnostics
             throw ('RunnerForge.exe stayed alive for 60s but never opened a window. ' +
                    'That is the signature of a GUI app whose startup path never ' +
                    'constructs or shows its main window.')

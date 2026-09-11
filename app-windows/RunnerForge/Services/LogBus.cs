@@ -88,6 +88,64 @@ public sealed class LogBus
         return result;
     }
 
+    // -----------------------------------------------------------------------
+    // The log file.
+    //
+    // The in-memory ring buffer feeds the Logs page, and it is gone the instant
+    // the process dies. That is exactly the moment somebody needs it: an app
+    // that crashes before its window appears leaves a user with no window AND no
+    // record of why. Every line therefore also goes to disk, already redacted.
+    //
+    // Failures to write are swallowed deliberately. Logging must never be the
+    // thing that takes the app down, and there is nowhere left to report a
+    // logging failure to.
+    // -----------------------------------------------------------------------
+
+    /// <summary>Where the durable log is written.</summary>
+    public static string DefaultLogPath { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "RunnerForge", "runnerforge.log");
+
+    private readonly Lock _fileLock = new();
+    private bool _fileUnavailable;
+
+    private void AppendToFile(LogEntry entry)
+    {
+        if (_fileUnavailable) return;
+
+        try
+        {
+            lock (_fileLock)
+            {
+                string? directory = Path.GetDirectoryName(DefaultLogPath);
+                if (directory is not null) Directory.CreateDirectory(directory);
+
+                // Rotate at 8 MB rather than growing without bound. One previous
+                // file is kept, because the interesting run is often the one
+                // before the one you are looking at.
+                var info = new FileInfo(DefaultLogPath);
+                if (info.Exists && info.Length > 8 * 1024 * 1024)
+                {
+                    string previous = DefaultLogPath + ".1";
+                    File.Delete(previous);
+                    File.Move(DefaultLogPath, previous);
+                }
+
+                // A full date, not the UI's time-only ToString(): a support log is read
+                // days later and "14:02:11" alone does not say which day.
+                string line = $"{entry.Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} "
+                            + $"[{entry.Level,-7}] {entry.Source,-14} {entry.Message}";
+                File.AppendAllText(DefaultLogPath, line + Environment.NewLine);
+            }
+        }
+        catch
+        {
+            // Disk full, permissions, a locked file — stop trying rather than
+            // throwing on every subsequent line.
+            _fileUnavailable = true;
+        }
+    }
+
     public void Write(LogLevel level, string source, string message)
     {
         var entry = new LogEntry(DateTimeOffset.Now, level, source, Redact(message));
@@ -95,6 +153,7 @@ public sealed class LogBus
 
         while (_entries.Count > MaxEntries && _entries.TryDequeue(out _)) { }
 
+        AppendToFile(entry);
         EntryAdded?.Invoke(entry);
     }
 

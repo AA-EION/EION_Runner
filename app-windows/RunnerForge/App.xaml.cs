@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
 using System.Threading;
@@ -130,7 +131,16 @@ public partial class App : Application
         }
 
         Services = new AppServices();
-        Services.LogBus.Info("app", "Runner Forge started");
+
+        // Breadcrumbs, in order, because the useful question after a startup
+        // crash is "how far did it get" and the answer has to survive the crash.
+        Services.LogBus.Info("app",
+            $"Runner Forge started — {Environment.OSVersion}, "
+            + $"{(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, "
+            + $"session {Process.GetCurrentProcess().SessionId}, "
+            + $"user {Environment.UserName}");
+        Services.LogBus.Info("app", $"log file: {LogBus.DefaultLogPath}");
+        Services.LogBus.Info("app", $"config:   {ConfigStore.DefaultConfigPath}");
 
         // Report a crash instead of vanishing. An unhandled exception on the UI
         // thread otherwise kills the process with no window and no message, which
@@ -154,9 +164,13 @@ public partial class App : Application
         // ---------------------------------------------------------------
         try
         {
+            Services.LogBus.Info("app", "constructing the main window");
             var window = new MainWindow();
             MainWindow = window;
+
+            Services.LogBus.Info("app", "showing the main window");
             window.Show();
+            Services.LogBus.Info("app", "the main window is open");
         }
         catch (Exception ex)
         {
@@ -164,8 +178,8 @@ public partial class App : Application
             MessageBox.Show(
                 "Runner Forge could not open its main window.\n\n"
                 + ex.Message
-                + "\n\nConfiguration lives at:\n"
-                + ConfigStore.DefaultConfigPath,
+                + "\n\nThe full error is in the log at:\n"
+                + LogBus.DefaultLogPath,
                 "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }

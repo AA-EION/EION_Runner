@@ -268,6 +268,181 @@ of this test and removed afterwards, so the repository tree matches the
 specified layout. It is reproducible by rendering
 `templates/workflow-build.yml.tmpl` and dispatching the result.
 
+
+### Stage G — the Windows app, its tests and the MSI
+
+The Windows app is compiled, its tests are RUN (not merely compiled), the
+single-file publish is asserted to actually be a single file, and the MSI's own
+`File` table is read back to prove the harvest carried the payload. An MSI with
+an empty `File` table installs cleanly and delivers nothing, so its existence is
+not evidence; its contents are.
+
+| Fact | Value |
+| --- | --- |
+| Run | [34550945700](https://github.com/AA-EION/EION_Runner/actions/runs/34550945700) |
+| Commit | `7402ebe` |
+| Runner | `windows-2022` (pinned; see TROUBLESHOOTING #12) |
+| Duration | 152 s |
+| Build | `0 Warning(s), 0 Error(s)` with `TreatWarningsAsErrors` on |
+| Tests | `Passed! - Failed: 0, Passed: 73, Skipped: 0, Total: 73, Duration: 106 ms` |
+| `RunnerForge.exe` | **62,984,861 bytes**, and zero loose files beside it |
+| Publish payload | 24 files, 63,217,417 bytes (exe + 20 scripts + 4 templates… see below) |
+| WiX | 5.0.2 |
+| `RunnerForge.msi` | **56,680,448 bytes** |
+| MSI `File` table | **24 rows** |
+
+The `File` table, read out of the MSI itself rather than assumed:
+
+```
+  qfsmnehk.exe|RunnerForge.exe             62984861 bytes
+  0yvzxzdf.tom|versions.toml               12472 bytes
+  fyv1z19s.sh|e2e-report.sh                4763 bytes
+  --bqqocl.sh|e2e-verify.sh                12755 bytes
+  wgdxe2oe.ps1|jitconfig.ps1               7445 bytes
+  cuylqoe7.sh|jitconfig.sh                 7844 bytes
+  vt0supkd.sh|preflight-macos.sh           12650 bytes
+  0qpbvdpq.ps1|preflight-windows.ps1       17113 bytes
+  reaper.ps1                               9549 bytes
+  reaper.sh                                9105 bytes
+  hzldh0so.ps1|sign-aax-cloud.ps1          6746 bytes
+  zpsiphnu.sh|sign-aax-cloud.sh            6417 bytes
+  tu8vqeze.ps1|sign-aax-ilok.ps1           5577 bytes
+  alg8czvf.sh|sign-aax-ilok.sh             4858 bytes
+  e9dkltnj.sh|sign-macos-artifact.sh       11511 bytes
+  butolg6j.ps1|sign-windows-artifact.ps1   8688 bytes
+  sweeper.ps1                              10831 bytes
+  sweeper.sh                               12714 bytes
+  gk89418e.sh|tart-runner.sh               7543 bytes
+  sv0aoywx.sh|verify-artifacts.sh          9624 bytes
+  j6iodxgi.tmp|secrets-checklist.md.tmpl   3801 bytes
+  lbrhajb9.tmp|workflow-build.yml.tmpl     21380 bytes
+  rtecksxe.tmp|workflow-selftest.yml.tmpl  21433 bytes
+  abdyefrp.tmp|workflow-sign.yml.tmpl      7737 bytes
+MSI File table: 24 row(s)
+```
+
+The `8dot3name|LongFileName` pairs are ordinary MSI short-name aliases, which
+Windows Installer generates for every file whose name is not already 8.3;
+`reaper.ps1` and `sweeper.sh` appear bare because theirs already are. The exe's
+62,984,861 bytes match the published file byte for byte, so the MSI carries the
+real payload rather than a stub.
+
+Artifacts, with the sizes GitHub reported on upload:
+
+| Artifact | Bytes | ID |
+| --- | --- | --- |
+| `RunnerForge-windows-msi` | 56,655,076 | 10180822285 |
+| `RunnerForge-windows-programfiles` | 57,627,016 | 10180823957 |
+| `RunnerForge-windows-testresults` | 14,741 | 10180824445 |
+
+Reproduce:
+
+```bash
+# from the repository root, on Windows
+cd app-windows
+dotnet restore RunnerForge.sln -p:Configuration=Release   # the -p matters; see TROUBLESHOOTING #10 and NETSDK1047
+dotnet build   RunnerForge.sln -c Release --no-restore
+dotnet test    RunnerForge.sln -c Release --no-build
+dotnet publish RunnerForge/RunnerForge.csproj -c Release -r win-x64 -o publish
+dotnet tool install --global wix --version 5.0.2
+wix build Installer\RunnerForge.wxs -d PublishDir="$PWD\publish" -arch x64 -o RunnerForge.msi
+```
+
+
+### Stage H — the macOS app, its tests and the DMG
+
+This job is the first place the macOS app is ever fully type-checked: the
+development machine for this work is Linux, where `swiftc -parse` proves syntax
+but cannot resolve SwiftUI, AppKit or Security. Everything below therefore comes
+from a real Apple Silicon macOS 26 runner.
+
+| Fact | Value |
+| --- | --- |
+| Run | [34551196570](https://github.com/AA-EION/EION_Runner/actions/runs/34551196570) |
+| Commit | `b0790e4` |
+| Runner | `macos-26` |
+| Duration | 103 s |
+| OS | `ProductVersion: 26.6.2`, `BuildVersion: 25G83` |
+| Xcode | `Xcode 26.6`, `Build version 17F113` |
+| Swift | `Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)`, target `arm64-apple-macosx26.0` |
+| Tests | `✔ Test run with 38 tests in 4 suites passed after 0.144 seconds.` |
+| `RunnerForge.dmg` | **1,227,193 bytes**, `hdiutil verify` → checksum VALID |
+| `RunnerForge-app.tar` | 3,141,120 bytes |
+| App inside the mounted DMG | 3,096 KB |
+
+The bundle, asserted rather than assumed:
+
+```
+com.runnerforge.app
+RunnerForge
+dist/RunnerForge.app: valid on disk
+dist/RunnerForge.app: satisfies its Designated Requirement
+--- entitlements as signed ---
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+--- architectures ---
+Non-fat file: dist/RunnerForge.app/Contents/MacOS/RunnerForge is architecture: arm64
+```
+
+Three things in that output are deliberate and are worth stating so they do not
+read as oversights:
+
+- **App Sandbox is `false`, as SIGNED** — not merely as written in the
+  entitlements file. The job greps the entitlements *out of the signature* and
+  fails the run if the sandbox is on, because a sandboxed process cannot launch
+  `tart`, `docker`, `codesign` or `notarytool`, which is the app's entire job.
+- **arm64 only, not universal.** Unlike the plugin artifacts, which must be
+  universal2, this app is Apple Silicon only by construction: Tart drives Apple's
+  Virtualization framework, which does not exist on Intel, and Preflight reports
+  an Intel Mac as a hard block with no fix. Shipping an x86_64 slice would
+  produce an app that launches and can do nothing.
+- **Ad-hoc signed.** No Developer ID identity is present on a hosted runner, so
+  CI signs ad-hoc: the app runs on the machine that built it and Gatekeeper
+  rejects it anywhere else. `build.sh --sign "Developer ID Application: …"
+  --notarize` produces the distributable build, signing nested code inside-out
+  (never `codesign --deep`) and stapling the notarization ticket.
+
+The DMG is mounted and its contents checked, because a `.dmg` that exists is not
+a `.dmg` that works:
+
+```
+lrwxr-xr-x  1 runner  staff  13 Sep 11 01:35 Applications -> /Applications
+drwxr-xr-x  3 runner  staff  96 Sep 11 01:35 RunnerForge.app
+app inside the DMG: 3096 KB
+```
+
+Artifacts, with the sizes GitHub reported on upload:
+
+| Artifact | Bytes | ID |
+| --- | --- | --- |
+| `RunnerForge-macos-dmg` | 1,199,177 | 10180897776 |
+| `RunnerForge-macos-app` | 822,112 | 10180898384 |
+
+The `.app` is tarred and the `.dmg` is not, and that asymmetry is the artifact
+contract at work: `upload-artifact` flattens symlinks, a bundle without its
+symlinks is no longer a bundle, and a `.dmg` is a single file with no symlinks to
+lose.
+
+Reproduce:
+
+```bash
+# on an Apple Silicon Mac running macOS 26 with Xcode 26
+cd app-macos
+swift build -c release
+swift test
+./build.sh --configuration release          # ad-hoc signed, as CI does
+hdiutil verify dist/RunnerForge.dmg
+codesign --display --entitlements - --xml dist/RunnerForge.app | plutil -convert xml1 -o - -
+```
+
 <!-- EVIDENCE-TABLE-END -->
 
 ## What could not be verified, and why

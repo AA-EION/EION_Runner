@@ -13,9 +13,9 @@
 // version is.
 //
 // Built as a library plus a thin executable so the logic is testable: Swift
-// Testing cannot import an executable target. The .app bundle, its Info.plist
-// and its entitlements are assembled by build.sh from ../Resources; they are
-// not SwiftPM resources, because SwiftPM does not build .app bundles.
+// Testing cannot import an executable target, which is why the @main entry point
+// is the only file that lives outside Sources/RunnerForge. The .app bundle is
+// assembled by build.sh from Sources/RunnerForge/Resources.
 
 import PackageDescription
 
@@ -33,6 +33,10 @@ let package = Package(
         .target(
             name: "RunnerForge",
             path: "Sources/RunnerForge",
+            // Info.plist and the entitlements are inputs to build.sh, not SwiftPM
+            // resources: SwiftPM does not build .app bundles and would only warn
+            // about files it has no rule for.
+            exclude: ["Resources"],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]

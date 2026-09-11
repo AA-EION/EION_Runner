@@ -75,7 +75,7 @@ rm -rf "${APP}"
 mkdir -p "${CONTENTS}/MacOS" "${CONTENTS}/Resources"
 
 cp "${EXECUTABLE}" "${CONTENTS}/MacOS/RunnerForge"
-cp "${SCRIPT_DIR}/Resources/Info.plist" "${CONTENTS}/Info.plist"
+cp "${SCRIPT_DIR}/Sources/RunnerForge/Resources/Info.plist" "${CONTENTS}/Info.plist"
 printf 'APPL????' > "${CONTENTS}/PkgInfo"
 
 # The scripts and templates are resources of the product. The app looks for them
@@ -103,7 +103,7 @@ if [[ -n "${SIGN_IDENTITY}" ]]; then
         done
 
     codesign --force --timestamp --options runtime \
-        --entitlements "${SCRIPT_DIR}/Resources/RunnerForge.entitlements" \
+        --entitlements "${SCRIPT_DIR}/Sources/RunnerForge/Resources/RunnerForge.entitlements" \
         --sign "${SIGN_IDENTITY}" "${APP}"
 
     codesign --verify --strict --verbose=2 "${APP}"
@@ -111,7 +111,7 @@ else
     # Ad-hoc signing so the app runs on the machine that built it. It is NOT
     # distributable: Gatekeeper rejects it anywhere else, by design.
     codesign --force --sign - \
-        --entitlements "${SCRIPT_DIR}/Resources/RunnerForge.entitlements" "${APP}"
+        --entitlements "${SCRIPT_DIR}/Sources/RunnerForge/Resources/RunnerForge.entitlements" "${APP}"
     echo "    ad-hoc signed (no --sign identity given): runs here, not elsewhere."
 fi
 

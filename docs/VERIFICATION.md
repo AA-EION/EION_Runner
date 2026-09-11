@@ -386,7 +386,30 @@ from a real Apple Silicon macOS 26 runner.
 | `RunnerForge-app.tar` | 3,141,120 bytes |
 | App inside the mounted DMG | 3,096 KB |
 | Re-verified after the §5 tree refactor | [34551453059](https://github.com/AA-EION/EION_Runner/actions/runs/34551453059), commit `966293c`, green |
-| Current head | [34569279916](https://github.com/AA-EION/EION_Runner/actions/runs/34569279916), commit `937c4f6`, green — dmg 1,248,486 B, app 862,184 B, including the 6 new signing tests |
+| Current head | [34571614106](https://github.com/AA-EION/EION_Runner/actions/runs/34571614106), commit `764808d`, green — 44 tests in 4 suites |
+| **The app launches and logs no errors** | run 34571614106, step 9 — the binary is run directly, is alive after 10 s, and its own log is read back |
+
+The log the smoke test reads back, in full, is the evidence that the app got
+somewhere rather than merely staying resident:
+
+```
+[Info] app Runner Forge started — Version 26.6.2 (Build 25G83), user runner
+[Info] app log file: /Users/runner/Library/Logs/RunnerForge/runnerforge.log
+[Info] app scripts:  .../RunnerForge.app/Contents/Resources/scripts
+[Info] app Runner Forge ready — config .../Application Support/RunnerForge/forge.json
+[Warning] preflight 2 of 15 checks failed
+```
+
+Those 2 failed preflight checks are correct and expected: a GitHub-hosted runner
+has no Developer ID identity and no Tart. A `[Warning]` is not a `[Error]`, which
+is why the check keys on the latter.
+
+One known, pre-existing warning in this step: `a caffeinate process outlived the
+app`. It is an artifact of the smoke test killing the process with `kill -9`,
+which never reaches AppKit's `applicationShouldTerminate` and so never runs
+`releaseCaffeinate()`. It appears identically in the runs before this work
+([34570056332](https://github.com/AA-EION/EION_Runner/actions/runs/34570056332))
+and is not a product defect. The Reaper clears such a process on the next launch.
 
 The bundle, asserted rather than assumed:
 
@@ -506,7 +529,7 @@ delivered once they are installable:
 | | Item | Status |
 | --- | --- | --- |
 | ✅ | **Stage G: the Windows app builds, its tests RUN, the MSI carries the program files, and the app OPENS A WINDOW.** | Run 34571310000, commit `e83159b`. 79 tests passed on Windows — the only place they can run. MSI `File` table read back: 24 rows, `RunnerForge.exe` at 62,996,936 bytes. The built app launches, shows a titled window (`Runner Forge`, handle 393296) and logs no errors on startup. |
-| ✅ | **Stage H: the macOS app builds, its tests run, and the DMG mounts with a runnable app.** | Run 34551196570. 38 tests in 4 suites passed. `hdiutil verify` VALID; the mounted DMG carries a runnable `RunnerForge.app` and an `/Applications` drop target; App Sandbox asserted `false` **as signed**. |
+| ✅ | **Stage H: the macOS app builds, its tests run, the DMG mounts with a runnable app, and the app LAUNCHES.** | Run 34571614106, commit `764808d`. 44 tests in 4 suites passed. `hdiutil verify` VALID; the mounted DMG carries a runnable `RunnerForge.app` and an `/Applications` drop target; App Sandbox asserted `false` **as signed**. The built app launches, survives 10 s, and its own log shows it reaching `Runner Forge ready` with no error line. |
 
 ### Deviations from §5, and why
 

@@ -139,6 +139,13 @@ jobs:
           app="dist/RunnerForge.app"
           binary="$app/Contents/MacOS/RunnerForge"
 
+          # Start from no log at all. The test suite constructs a LogBus too and
+          # writes to this same path, so without this the error check below would
+          # be reading the TEST run's lines and could fail for something that has
+          # nothing to do with launching the app.
+          rm -f "$HOME/Library/Logs/RunnerForge/runnerforge.log" \
+                "$HOME/Library/Logs/RunnerForge/runnerforge.log.1"
+
           # Run the binary directly rather than `open`: `open` returns
           # immediately and reports nothing about what happened next, so a
           # crash-on-launch would look like success.

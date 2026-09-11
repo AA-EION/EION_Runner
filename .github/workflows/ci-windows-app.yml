@@ -142,6 +142,15 @@ jobs:
           }
 
           $exe = (Resolve-Path 'publish\RunnerForge.exe').Path
+
+          # Start from no log at all. The unit tests construct a LogBus too and
+          # write to this same path, so without this the error check below would
+          # be reading the TEST run's lines and could fail for something that has
+          # nothing to do with launching the app.
+          $logPath = Join-Path $env:LOCALAPPDATA 'RunnerForge\runnerforge.log'
+          Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+          Remove-Item "$logPath.1" -Force -ErrorAction SilentlyContinue
+
           Write-Host "launching $exe"
 
           $process = Start-Process -FilePath $exe -PassThru

@@ -41,6 +41,20 @@ public sealed class LogsViewModel : ObservableObject
     }
 
     /// <summary>Already redacted, so it is safe to put on the clipboard or in a file.</summary>
+    private string _copyStatus = "";
+
+    /// <summary>
+    /// The outcome of the last Copy or Save. Shown beside the buttons, because
+    /// a copy that silently did nothing is worse than one that says it failed —
+    /// the person pastes stale clipboard content into a bug report and nobody
+    /// notices.
+    /// </summary>
+    public string CopyStatus
+    {
+        get => _copyStatus;
+        set => SetProperty(ref _copyStatus, value);
+    }
+
     public string CopyText() => string.Join(Environment.NewLine, Entries.Select(e => e.ToString()));
 
     public void SaveTo(string path) => File.WriteAllText(path, CopyText());

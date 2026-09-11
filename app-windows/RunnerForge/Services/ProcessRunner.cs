@@ -45,6 +45,17 @@ public sealed class ProcessRunner(LogBus logBus)
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+
+            // Decode child output as UTF-8 rather than the console's OEM code
+            // page. Without this, a localised Windows mangles every non-ASCII
+            // character on its way into the log: a real run produced
+            //     "found: Firma de c\u00a2digo"
+            // for "Firma de c\u00f3digo", because CP850 was being read as if it
+            // were the default encoding. A log that corrupts the message is
+            // worse than one that omits it, since the reader cannot tell which
+            // happened.
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
 
         foreach (string argument in arguments)

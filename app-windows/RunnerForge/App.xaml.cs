@@ -210,6 +210,21 @@ public partial class App : Application
             return;
         }
 
+        // ---------------------------------------------------------------
+        // Repeat the build identity through the LogBus now that it exists.
+        //
+        // WriteBootstrap goes straight to the FILE, bypassing the in-memory ring
+        // buffer the Logs page reads. So a log copied out of the app began at
+        // "services ready" and never said which build produced it — which is the
+        // first thing anyone needs from a bug report, and it was missing from
+        // the one channel people actually use to send one.
+        // ---------------------------------------------------------------
+        Services.LogBus.Info("app",
+            $"Runner Forge {ThisVersion} — {Environment.OSVersion}, "
+            + $"{(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, user {Environment.UserName}, "
+            + $"culture {CultureInfo.CurrentCulture.Name}");
+        Services.LogBus.Info("app", $"exe {Environment.ProcessPath}");
+        Services.LogBus.Info("app", $"log {LogBus.DefaultLogPath}");
         Services.LogBus.Info("app", $"services ready; config {Services.ConfigStore.ConfigPath}");
 
         // ---------------------------------------------------------------

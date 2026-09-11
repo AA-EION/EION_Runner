@@ -62,13 +62,29 @@ if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') {
     exit 3
 }
 
+# Emit UTF-8 regardless of the console's code page. Windows PowerShell defaults
+# to the OEM page, so a localised message ("Firma de codigo") reaches a UTF-8
+# reader as mojibake. Setting it here means the script's own output survives
+# being captured, whatever locale this machine is in.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 $storePath = "Cert:\$StoreLocation\My"
 
 # A subject that already has a certificate is not silently duplicated: two
 # code-signing certificates with the same subject make the thumbprint choice
 # ambiguous for a human reading the list, which is how the wrong one gets used.
+# MATCH ON THE OID, NEVER ON FriendlyName. FriendlyName is LOCALISED by
+# Windows: on a Spanish install the Code Signing EKU is called
+# "Firma de codigo", on a German one "Codesignatur". Comparing it against the
+# English string makes this script work on English Windows and fail everywhere
+# else. The OID is the identifier; the name is a label for humans.
+$CodeSigningEku = '1.3.6.1.5.5.7.3.3'
+
 $existing = @(Get-ChildItem $storePath |
-    Where-Object { $_.Subject -eq "CN=$Subject" -and $_.EnhancedKeyUsageList.FriendlyName -contains 'Code Signing' })
+    Where-Object {
+        $_.Subject -eq "CN=$Subject" -and
+        ($_.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId }) -contains $CodeSigningEku
+    })
 
 if ($existing.Count -gt 0) {
     if (-not $Force) {
@@ -103,12 +119,15 @@ if (-not $cert) {
 
 # Proof rather than assumption. A certificate without the Code Signing EKU is
 # rejected by signtool later, with a much less obvious message than this one.
-$eku = $cert.EnhancedKeyUsageList | ForEach-Object { $_.FriendlyName }
-if ($eku -notcontains 'Code Signing') {
-    Write-Host "error: the generated certificate has no Code Signing EKU (found: $($eku -join ', '))" -ForegroundColor Red
+$ekuOids = @($cert.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId })
+if ($ekuOids -notcontains $CodeSigningEku) {
+    $shown = $cert.EnhancedKeyUsageList |
+        ForEach-Object { "$($_.FriendlyName) [$($_.ObjectId)]" }
+    Write-Host "error: the generated certificate has no Code Signing EKU ($CodeSigningEku)." -ForegroundColor Red
+    Write-Host "       Found: $($shown -join ', ')" -ForegroundColor Red
     exit 4
 }
-Write-Log 'verified: Code Signing EKU present'
+Write-Log "verified: Code Signing EKU present ($CodeSigningEku)"
 
 if ($OutputPfx) {
     if (-not $env:PFX_PASSWORD) {

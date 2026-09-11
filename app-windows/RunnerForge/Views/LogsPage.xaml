@@ -18,6 +18,8 @@
             <Button x:Name="CopyButton" Content="Copy" Padding="12,4" Click="OnCopyClick"/>
             <Button x:Name="SaveButton" Content="Save to file" Padding="12,4" Margin="8,0,0,0" Click="OnSaveClick"/>
             <Button Content="Clear" Command="{Binding ClearCommand}" Padding="12,4" Margin="8,0,0,0"/>
+            <TextBlock Text="{Binding CopyStatus}" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="#666" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
 
         <ListBox ItemsSource="{Binding Entries}" FontFamily="Consolas" FontSize="12"

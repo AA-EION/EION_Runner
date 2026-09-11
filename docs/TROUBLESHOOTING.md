@@ -816,6 +816,77 @@ mode makes it a prerequisite the user must satisfy, forever, for everything —
 and if two features need opposite modes, the requirement is not merely annoying,
 it is unsatisfiable.
 
+
+## 25. Three bugs from one real log
+
+A log sent from a Spanish-locale Windows 11 machine, with the app running
+correctly, contained three separate defects. Recorded together because they
+share a shape: **assuming a value is stable when Windows varies it per machine.**
+
+### 25a. "the generated certificate has no Code Signing EKU (found: Firma de c¢digo)"
+
+```
+[Info   ] signing  [make-signing-cert] generating a code-signing certificate for CN=EION Studios
+[Info   ] signing  error: the generated certificate has no Code Signing EKU (found: Firma de c¢digo)
+```
+
+**The certificate was correct.** `make-signing-cert.ps1` verified it by comparing
+`EnhancedKeyUsageList.FriendlyName` against the English string `'Code Signing'`.
+That name is **localised by Windows** — "Firma de código" in Spanish,
+"Codesignatur" in German — so the script worked on English Windows and refused
+its own valid output everywhere else.
+
+Fix: compare the OID, `1.3.6.1.5.5.7.3.3` (`id-kp-codeSigning`), which is the
+same in every locale. The name is a label for humans; the OID is the identifier.
+
+The C# `SigningService` already did this correctly, which made it worse: the
+Signing page would list a certificate the generator had just declared invalid.
+
+### 25b. `c¢digo` instead of `código`
+
+The same line shows the second bug. `ProcessRunner` did not set
+`StandardOutputEncoding`, so child output was decoded with the console's OEM
+code page (CP850) instead of UTF-8. **A log that corrupts the message is worse
+than one that omits it**, because the reader cannot tell which happened. Now
+UTF-8 on both streams, and the scripts set `[Console]::OutputEncoding` so their
+own output survives capture.
+
+### 25c. The Copy button on the Logs page crashed
+
+```
+System.Runtime.InteropServices.COMException (0x800401D0): OpenClipboard failed
+   at System.Windows.Clipboard.Flush()
+   at RunnerForge.Views.LogsPage.OnCopyClick(...)
+```
+
+The Windows clipboard is a single system-wide resource opened exclusively. Any
+other process holding it — a clipboard manager, a remote desktop client, Office,
+a screenshot tool — makes `SetText` throw `CLIPBRD_E_CANT_OPEN`. It is transient
+and common.
+
+Copy now retries briefly, uses `SetDataObject(text, copy: true)` so the content
+survives the app exiting, and on failure says so beside the button and suggests
+Save to file. **An unhandled throw here is absurd on its face:** an error dialog
+about failing to copy the error log, raised from the page people are on
+*because* something already went wrong.
+
+Save has the same treatment, for the same reason.
+
+### 25d. The log did not say which build produced it
+
+The log began at `services ready`. The build-identity breadcrumbs were written
+by `LogBus.WriteBootstrap`, which goes **straight to the file** and bypasses the
+in-memory ring buffer the Logs page reads — so the one channel people actually
+use to send a log omitted the first thing anyone needs from it. The identity is
+now repeated through the LogBus once it exists, and includes the current culture,
+which is what would have made 25a obvious on sight.
+
+**The general rule.** Anything Windows shows a human — an EKU name, an error
+string, a folder name — is presentation, and varies by locale. Match on the
+identifier underneath it: an OID, an HRESULT, a GUID, a known folder ID. And a
+diagnostic path must be the most defensive code in the product, not the least:
+it runs when things are already broken.
+
 _More entries are added as failures are encountered. An entry is only added here
 once it has actually been hit — this file is a log, not a list of things that
 might go wrong._

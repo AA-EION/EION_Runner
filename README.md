@@ -102,10 +102,27 @@ compose/          docker-compose definition for the container classes
 scripts/          JIT config, reaper, sweeper, preflight, signing, E2E drivers
 templates/        the workflow YAML Runner Forge emits for your repository
 canary/           a minimal JUCE 8 plugin used to prove the pipeline end to end
-app-windows/      RunnerForge.exe  (.NET 9 + WPF)
-app-macos/        RunnerForge.app  (Swift 6 + SwiftUI)
+app-windows/      RunnerForge.exe  (.NET 9 + WPF), with the WiX source for the MSI
+app-macos/        RunnerForge.app  (Swift 6 + SwiftUI), with build.sh for the DMG
 docs/             architecture, setup, signing, verification, troubleshooting
 ```
+
+## Installing the apps
+
+Both apps are built and packaged by CI, and every push uploads them as artifacts:
+
+| Artifact | What it is |
+| --- | --- |
+| `RunnerForge-windows-msi` | `RunnerForge.msi` — the app plus its scripts and templates, installed to `Program Files\Runner Forge` |
+| `RunnerForge-windows-programfiles` | the same payload unpacked, if you would rather not run an installer |
+| `RunnerForge-macos-dmg` | `RunnerForge.dmg` — drag `RunnerForge.app` to Applications |
+| `RunnerForge-macos-app` | the `.app` as a tarball; macOS bundles are tarred because `upload-artifact` flattens symlinks and a bundle without its symlinks is no longer a bundle |
+
+The DMG CI produces is **ad-hoc signed**, which means it runs on the machine that
+built it and Gatekeeper rejects it anywhere else. That is deliberate: a distributable
+build needs a Developer ID identity and notarization, which
+`app-macos/build.sh --sign "Developer ID Application: …" --notarize` does on a machine
+that has them.
 
 ## Versioning
 

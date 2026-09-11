@@ -66,18 +66,22 @@ struct SweeperPolicyTests {
         #expect(!SweeperPolicy.isDeletableTartEntry("sonoma-base"))
     }
 
-    /// A clone is named for deletion and an image is named for keeping. If one
-    /// name ever satisfied both, the sweeper would be ambiguous.
-    @Test("nothing is both KEEP and deletable")
-    func keepAndDeleteAreDisjoint() {
-        let candidates = SweeperPolicy.keepVolumes
-            + SweeperPolicy.keepTartImages(tag: "26.0")
-            + ["forge-mac-build-0-1", "forge-fetchcontent"]
+    /// The two predicates work on DIFFERENT namespaces, and conflating them is
+    /// how a base image gets deleted. `isDeletableTartEntry` answers only "is
+    /// this a per-job Tart clone"; a Docker volume like `forge-fetchcontent`
+    /// shares the prefix and is never passed to it. Within the Tart namespace,
+    /// nothing may be both KEEP and deletable.
+    @Test("within the Tart namespace, nothing is both KEEP and deletable")
+    func tartKeepAndDeleteAreDisjoint() {
+        let tartNames = SweeperPolicy.keepTartImages(tag: "26.0")
+            + ["runnerforge-macos:26.0", "ghcr.io/cirruslabs/macos-tahoe-xcode:26"]
+            + ["forge-mac-build-0-1712345678", "forge-mac-ilok-0-1712345679"]
 
-        for name in candidates {
+        for name in tartNames {
             let keep = SweeperPolicy.isKeepItem(name, tartTag: "26.0")
             let deletable = SweeperPolicy.isDeletableTartEntry(name)
             #expect(!(keep && deletable), "\(name) is both KEEP and deletable")
+            #expect(keep || deletable, "\(name) is neither KEEP nor deletable")
         }
     }
 

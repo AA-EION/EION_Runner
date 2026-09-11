@@ -52,16 +52,29 @@ echo "==> swift build -c ${CONFIGURATION}"
 swift build --package-path "${SCRIPT_DIR}" -c "${CONFIGURATION}"
 BIN="$(swift build --package-path "${SCRIPT_DIR}" -c "${CONFIGURATION}" --show-bin-path)"
 
-if [[ ! -x "${BIN}/RunnerForge" ]]; then
-    echo "build.sh: expected executable not found at ${BIN}/RunnerForge" >&2
+# SwiftPM names the binary after the executable PRODUCT, but the target name is
+# a plausible fallback and guessing wrong here would produce an .app with no
+# executable, which macOS reports only as "the application quit unexpectedly".
+EXECUTABLE=""
+for candidate in RunnerForge RunnerForgeApp; do
+    if [[ -x "${BIN}/${candidate}" ]]; then
+        EXECUTABLE="${BIN}/${candidate}"
+        break
+    fi
+done
+
+if [[ -z "${EXECUTABLE}" ]]; then
+    echo "build.sh: no executable found in ${BIN}. Contents:" >&2
+    ls -l "${BIN}" >&2
     exit 1
 fi
+echo "    executable: ${EXECUTABLE}"
 
 echo "==> assembling ${APP}"
 rm -rf "${APP}"
 mkdir -p "${CONTENTS}/MacOS" "${CONTENTS}/Resources"
 
-cp "${BIN}/RunnerForge" "${CONTENTS}/MacOS/RunnerForge"
+cp "${EXECUTABLE}" "${CONTENTS}/MacOS/RunnerForge"
 cp "${SCRIPT_DIR}/Resources/Info.plist" "${CONTENTS}/Info.plist"
 printf 'APPL????' > "${CONTENTS}/PkgInfo"
 

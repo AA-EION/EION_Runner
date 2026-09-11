@@ -1,9 +1,10 @@
 import AppKit
+import Foundation
 import RunnerForge
 import SwiftUI
 
 @main
-struct RunnerForgeApp: App {
+struct ForgeMainApp: App {
     @State private var store = ForgeStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 

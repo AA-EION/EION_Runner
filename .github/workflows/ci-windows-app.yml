@@ -223,6 +223,16 @@ jobs:
                    'A window on screen is not the same as a working app.')
           }
 
+          # The log must identify the build. Every "it does not work" report
+          # starts with "which build is that", and it has to be answerable
+          # from the log the user sends, without asking them anything.
+          if (-not (Select-String -Path $log -Pattern 'Runner Forge .* starting' -Quiet)) {
+            Get-Content $log
+            throw 'The startup log does not identify the build it came from.'
+          }
+          Select-String -Path $log -Pattern 'starting|services ready|main window is open' |
+            ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+
           Write-Host 'smoke test passed: the app opens a titled window and logs no errors'
 
       - name: Install WiX

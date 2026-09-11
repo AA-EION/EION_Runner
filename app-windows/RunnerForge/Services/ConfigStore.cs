@@ -32,6 +32,11 @@ public sealed class ConfigStore(LogBus logBus)
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "RunnerForge", "work");
 
+    /// <summary>%LOCALAPPDATA%\RunnerForge\forge.json — the per-user fallback.</summary>
+    public static string FallbackConfigPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "RunnerForge", "forge.json");
+
     public string ConfigPath { get; set; } = DefaultConfigPath;
 
     public ForgeConfig Load()
@@ -40,7 +45,43 @@ public sealed class ConfigStore(LogBus logBus)
         {
             _logBus.Info("config", $"no config at {ConfigPath}; creating defaults");
             ForgeConfig created = ForgeConfig.CreateDefault(DefaultWorkDir);
-            Save(created);
+
+            // ---------------------------------------------------------------
+            // The config is machine-wide BY DESIGN: runners are a property of
+            // the machine, not of whoever happens to be logged in. But
+            // %ProgramData%\RunnerForge can be unwritable for the person
+            // running the app — created by an elevated run or another account,
+            // locked down by policy — and on a standard desktop that is a
+            // realistic, invisible failure.
+            //
+            // Refusing to start over it would be the wrong trade. FAILING TO
+            // START IS WORSE THAN A PER-USER CONFIG, so fall back, say so
+            // loudly in the log, and carry on. What must never happen is what
+            // used to: the exception escaped Load(), escaped the service
+            // container, and killed the process before any window or handler
+            // existed — no UI and no error.
+            // ---------------------------------------------------------------
+            try
+            {
+                Save(created);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                _logBus.Warning("config",
+                    $"cannot write {ConfigPath} ({ex.GetType().Name}: {ex.Message}); "
+                    + $"falling back to the per-user config at {FallbackConfigPath}. "
+                    + "Settings will apply to this user only.");
+
+                ConfigPath = FallbackConfigPath;
+
+                if (File.Exists(ConfigPath))
+                {
+                    return Parse(File.ReadAllText(ConfigPath));
+                }
+
+                Save(created);
+            }
+
             return created;
         }
 

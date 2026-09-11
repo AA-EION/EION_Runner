@@ -589,5 +589,58 @@ startup log and fails on any `[Error]` line, because **an open window is not pro
 app works** — one fewer broken binding and this would have opened a window with nothing
 in it and passed.
 
-_More entries are added as failures are encountered. An entry is only added here once it
-has actually been hit — this file is a log, not a list of things that might go wrong._
+
+## 21. The app starts, no window appears, and there is no error anywhere
+
+**Symptom** — no UI, no dialog, no crash. Possibly no log either. Reported twice
+on a real machine after the CI smoke test was already proving a window opens.
+
+**First: which build is it?** The log's first line now says. If there is no such
+line, the build predates this entry and the answer is "not the fixed one":
+
+```
+Runner Forge 1.0.0 starting — Microsoft Windows NT 10.0.26100.0, 64-bit, session 1, user you
+exe:    C:\Program Files\Runner Forge\RunnerForge.exe
+log:    C:\Users\you\AppData\Local\RunnerForge\runnerforge.log
+config: C:\ProgramData\RunnerForge\forge.json
+```
+
+The log is at `%LOCALAPPDATA%\RunnerForge\runnerforge.log`. **Where it stops is
+the diagnosis** — that is what the breadcrumbs are for:
+
+| Last line | Meaning |
+| --- | --- |
+| nothing at all | The process never reached `OnStartup`. Wrong exe, or it was blocked from running (SmartScreen, AV quarantine). |
+| `config: …` then nothing | A handler was attached but building the services died. The next line says why. |
+| `cannot write …falling back` | `%ProgramData%\RunnerForge` is not writable by you. The app now carries on with a per-user config; this is a warning, not a stop. |
+| `another Runner Forge already holds…` | A previous copy is STILL RUNNING with no window. End `RunnerForge.exe` in Task Manager and start again. |
+| `services ready` then nothing | `MainWindow`'s constructor threw. The error follows it. |
+| `the main window is open` | The window genuinely exists. If you cannot see it, it is behind something or on a disconnected monitor — the line reports its size and position. |
+
+**Causes found, in the order they were found:**
+
+1. Nothing ever constructed `MainWindow` — TROUBLESHOOTING #19.
+2. `InvariantGlobalization` broke every binding — TROUBLESHOOTING #20.
+3. **The service container was built before the exception handlers were
+   attached.** `App.OnStartup` did `Services = new AppServices()` first, with no
+   `try`/`catch` and with `DispatcherUnhandledException` hooked up afterwards.
+   Building services writes `%ProgramData%\RunnerForge\forge.json`, so it can
+   fail on a real desktop in ways a CI runner never sees — an ACL on that folder
+   left by an elevated run being the obvious one. When it did, the exception
+   escaped `OnStartup` with no handler anywhere and the process died before a
+   window, a dialog, or a single further log line existed.
+
+**Fix** — the startup order is now: identify the build in the log, attach BOTH
+`DispatcherUnhandledException` and `AppDomain.CurrentDomain.UnhandledException`,
+and only then do anything that can fail — each step inside a `try`/`catch` that
+reports. An unwritable machine-wide config falls back to a per-user one with a
+logged warning rather than stopping: **failing to start is worse than a per-user
+config.**
+
+The general rule, which this file has now paid for three times: *any work done
+before the error handlers are installed can only fail silently.* Put the
+handlers first.
+
+_More entries are added as failures are encountered. An entry is only added here
+once it has actually been hit — this file is a log, not a list of things that
+might go wrong._

@@ -27,6 +27,46 @@ public sealed class ConfigStoreTests
     private static JsonNode ValidNode() =>
         Parse(JsonSerializer.Serialize(ValidConfig(), ForgeConfig.SerializerOptions));
 
+    /// <summary>
+    /// The failure this guards against killed the app with no window and no
+    /// error message: Save() threw out of Load(), out of the service container,
+    /// and out of OnStartup before any handler was attached. Starting with a
+    /// per-user config beats not starting.
+    /// </summary>
+    [Fact]
+    public void An_unwritable_machine_config_falls_back_to_the_user_config()
+    {
+        // A path whose PARENT is an existing file. Directory.CreateDirectory
+        // cannot make a directory there, so Save() throws IOException — the
+        // same shape as the ACL failure this exists for, without needing to
+        // manipulate ACLs in a test.
+        string blocker = Path.Combine(Path.GetTempPath(), $"rf-blocker-{Guid.NewGuid():N}");
+        File.WriteAllText(blocker, "not a directory");
+
+        string fallback = ConfigStore.FallbackConfigPath;
+        string? saved = File.Exists(fallback) ? File.ReadAllText(fallback) : null;
+
+        try
+        {
+            var store = new ConfigStore(new LogBus())
+            {
+                ConfigPath = Path.Combine(blocker, "RunnerForge", "forge.json"),
+            };
+
+            ForgeConfig config = store.Load();
+
+            Assert.NotNull(config);
+            Assert.Equal(fallback, store.ConfigPath);
+            Assert.True(File.Exists(fallback));
+        }
+        finally
+        {
+            File.Delete(blocker);
+            if (saved is null) File.Delete(fallback);
+            else File.WriteAllText(fallback, saved);
+        }
+    }
+
     [Fact]
     public void A_valid_config_produces_no_problems()
     {

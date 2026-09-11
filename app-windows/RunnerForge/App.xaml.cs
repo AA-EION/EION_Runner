@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Globalization;
 using System.Net.Http;
 using System.Threading;
@@ -118,36 +119,86 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // ---------------------------------------------------------------
+        // ORDER MATTERS HERE, and it is the reason this method looks the way
+        // it does.
+        //
+        // Previously the service container was built FIRST and the exception
+        // handlers were attached after it. Anything that threw while building
+        // services — and building services touches the filesystem, so it can —
+        // killed the process before any handler existed: no window, no dialog,
+        // nothing. "No UI, no errors" is precisely what that looks like from
+        // the outside, and it is indistinguishable from the two earlier bugs
+        // that produced the same report (TROUBLESHOOTING #19, #20).
+        //
+        // So now: breadcrumbs first, handlers second, everything that can fail
+        // third, and every one of those inside a try/catch that SAYS SO.
+        // ---------------------------------------------------------------
+
+        // Identify the build before anything else can go wrong. The first
+        // question on any "it does not work" report is "which build is that",
+        // and it has to be answerable from the log alone.
+        LogBus.WriteBootstrap(LogLevel.Info, "app", new string('-', 60));
+        LogBus.WriteBootstrap(LogLevel.Info, "app",
+            $"Runner Forge {ThisVersion} starting — {Environment.OSVersion}, "
+            + $"{(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, "
+            + $"session {Process.GetCurrentProcess().SessionId}, user {Environment.UserName}");
+        LogBus.WriteBootstrap(LogLevel.Info, "app", $"exe:    {Environment.ProcessPath}");
+        LogBus.WriteBootstrap(LogLevel.Info, "app", $"log:    {LogBus.DefaultLogPath}");
+        LogBus.WriteBootstrap(LogLevel.Info, "app", $"config: {ConfigStore.DefaultConfigPath}");
+
+        // Report a crash instead of vanishing. Attached BEFORE anything that
+        // can throw, which was the whole defect above.
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+
+        base.OnStartup(e);
+
         _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
 
         if (!createdNew)
         {
+            // Logged as well as shown: if the dialog is dismissed or never seen,
+            // the log still says why this launch produced no window.
+            LogBus.WriteBootstrap(LogLevel.Warning, "app",
+                "another Runner Forge already holds the single-instance mutex; exiting. "
+                + "If no window is visible, a previous copy is still running — end "
+                + "RunnerForge.exe in Task Manager and start again.");
+
             MessageBox.Show(
                 "Runner Forge is already running. Two copies would fight over the same runners and the same "
-                + "work directory.",
+                + "work directory.\n\n"
+                + "If you cannot see its window, a previous copy is still running in the background: end "
+                + "RunnerForge.exe in Task Manager and start Runner Forge again.",
                 "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
         }
 
-        Services = new AppServices();
+        // ---------------------------------------------------------------
+        // Build the services. This touches the filesystem — it creates and
+        // writes %ProgramData%\RunnerForge\forge.json — so it can genuinely
+        // fail on a real machine in ways a CI runner never sees, an ACL on
+        // that folder being the obvious one.
+        // ---------------------------------------------------------------
+        try
+        {
+            Services = new AppServices();
+        }
+        catch (Exception ex)
+        {
+            LogBus.WriteBootstrap(LogLevel.Error, "app", $"could not start: {ex}");
+            MessageBox.Show(
+                "Runner Forge could not start.\n\n"
+                + ex.Message
+                + "\n\nThe full error is in the log at:\n"
+                + LogBus.DefaultLogPath,
+                "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
 
-        // Breadcrumbs, in order, because the useful question after a startup
-        // crash is "how far did it get" and the answer has to survive the crash.
-        Services.LogBus.Info("app",
-            $"Runner Forge started — {Environment.OSVersion}, "
-            + $"{(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, "
-            + $"session {Process.GetCurrentProcess().SessionId}, "
-            + $"user {Environment.UserName}");
-        Services.LogBus.Info("app", $"log file: {LogBus.DefaultLogPath}");
-        Services.LogBus.Info("app", $"config:   {ConfigStore.DefaultConfigPath}");
-
-        // Report a crash instead of vanishing. An unhandled exception on the UI
-        // thread otherwise kills the process with no window and no message, which
-        // is indistinguishable from "the app does nothing".
-        DispatcherUnhandledException += OnDispatcherUnhandledException;
-
-        base.OnStartup(e);
+        Services.LogBus.Info("app", $"services ready; config {Services.ConfigStore.ConfigPath}");
 
         // ---------------------------------------------------------------
         // Show the window.
@@ -170,7 +221,15 @@ public partial class App : Application
 
             Services.LogBus.Info("app", "showing the main window");
             window.Show();
-            Services.LogBus.Info("app", "the main window is open");
+
+            // Activate() as well as Show(): a window that is open but behind
+            // everything else is, to the person looking at the screen, the same
+            // as no window at all.
+            window.Activate();
+
+            Services.LogBus.Info("app",
+                $"the main window is open — {window.Width}x{window.Height} at "
+                + $"{window.Left},{window.Top}, visible {window.IsVisible}");
         }
         catch (Exception ex)
         {
@@ -183,6 +242,25 @@ public partial class App : Application
                 "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    /// <summary>The build, as the log and the About line report it.</summary>
+    private static string ThisVersion =>
+        Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? "unknown";
+
+    /// <summary>
+    /// The last line of defence. An exception on a non-UI thread does not reach
+    /// DispatcherUnhandledException, and by default takes the process down with
+    /// no message at all.
+    /// </summary>
+    private void OnAppDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        string text = e.ExceptionObject is Exception ex ? ex.ToString() : e.ExceptionObject.ToString() ?? "unknown";
+
+        if (Services is not null) Services.LogBus.Error("app", $"unhandled (non-UI thread): {text}");
+        else LogBus.WriteBootstrap(LogLevel.Error, "app", $"unhandled (non-UI thread): {text}");
     }
 
     /// <summary>True while a MessageBox from the handler below is on screen.</summary>

@@ -109,6 +109,35 @@ public sealed class LogBus
     private readonly Lock _fileLock = new();
     private bool _fileUnavailable;
 
+    /// <summary>
+    /// Writes one line to the durable log WITHOUT needing a LogBus instance.
+    ///
+    /// This exists for the window in which there is no instance yet — before the
+    /// service container is built — and for the case where building it is the
+    /// thing that failed. A startup that dies there would otherwise leave no
+    /// window, no dialog and no log: indistinguishable from "the app does
+    /// nothing", which is exactly the report this product has already had twice.
+    ///
+    /// It takes no secrets by construction: every caller is a fixed string or a
+    /// path, never a credential and never a subprocess line.
+    /// </summary>
+    public static void WriteBootstrap(LogLevel level, string source, string message)
+    {
+        try
+        {
+            string? directory = Path.GetDirectoryName(DefaultLogPath);
+            if (directory is not null) Directory.CreateDirectory(directory);
+
+            string line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} "
+                        + $"[{level,-7}] {source,-14} {message}";
+            File.AppendAllText(DefaultLogPath, line + Environment.NewLine);
+        }
+        catch
+        {
+            // There is nowhere left to report a logging failure to.
+        }
+    }
+
     private void AppendToFile(LogEntry entry)
     {
         if (_fileUnavailable) return;

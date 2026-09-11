@@ -30,7 +30,7 @@
                     <TextBlock Text="{Binding KeepExplanation}" TextWrapping="Wrap" Foreground="#666"
                                Margin="0,4,0,8" FontSize="11"/>
                 </StackPanel>
-                <ListBox ItemsSource="{Binding KeepItems}">
+                <ListBox ItemsSource="{Binding KeepItems}" VirtualizingPanel.IsVirtualizing="False">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel>
@@ -51,7 +51,7 @@
                     <TextBlock Text="Deleted on close and on demand. Containers, job workspaces, temp downloads, dangling layers and old logs."
                                TextWrapping="Wrap" Foreground="#666" Margin="0,4,0,8" FontSize="11"/>
                 </StackPanel>
-                <ListBox ItemsSource="{Binding PurgeItems}">
+                <ListBox ItemsSource="{Binding PurgeItems}" VirtualizingPanel.IsVirtualizing="False">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel>

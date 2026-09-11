@@ -27,9 +27,9 @@
                                 <TextBlock Width="18" FontWeight="Bold"
                                            Text="{Binding Satisfied, Converter={StaticResource BoolToTick}}"/>
                                 <StackPanel>
-                                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" MaxWidth="640"/>
+                                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Width="640"/>
                                     <TextBlock Text="{Binding HowToFix}" Foreground="#666" TextWrapping="Wrap"
-                                               MaxWidth="640" FontSize="11"/>
+                                               Width="640" FontSize="11"/>
                                 </StackPanel>
                             </StackPanel>
                         </DataTemplate>
@@ -93,6 +93,7 @@
                      name, and retyping 40 hex characters is how this goes wrong. -->
                 <ListBox ItemsSource="{Binding Certificates}"
                          SelectedItem="{Binding SelectedCertificate}"
+                         VirtualizingPanel.IsVirtualizing="False"
                          Height="120" Width="560" HorizontalAlignment="Left" Margin="0,0,0,6">
                     <ListBox.ItemTemplate>
                         <DataTemplate>

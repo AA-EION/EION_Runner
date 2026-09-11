@@ -485,5 +485,64 @@ returns immediately and would report success for a crash — and asserts it is s
 ten seconds later. SwiftUI's `WindowGroup` makes the exact WPF failure structurally
 impossible on macOS, but a crash during launch is not.
 
+---
+
+## 20. The WPF app crashes on startup with 0xC00000FD, or 0xC0000005
+
+**Symptom** — the window never appears. The process lives for ten to thirty seconds
+and dies. The Windows Application event log says:
+
+```
+Faulting application name: RunnerForge.exe
+Faulting module name: msvcrt.dll
+Exception code: 0xc00000fd
+```
+
+`0xC00000FD` is `STATUS_STACK_OVERFLOW`. The same fault sometimes surfaces as
+`0xC0000005` (access violation) instead, depending on where the stack runs out.
+
+**Cause** — a WPF layout feedback loop. The managed stack, read outermost-first, is:
+
+```
+VirtualizingStackPanel.<InitializeViewport>b__0()
+ContextLayoutManager.UpdateLayout()
+Window.MeasureOverride ... Grid.MeasureCell ... DockPanel.MeasureOverride
+```
+
+repeated until the stack is gone. A `VirtualizingStackPanel` is measuring, calling
+`UpdateLayout()` to settle its viewport, and that re-enters the very measure pass it
+was called from.
+
+The trigger is a **wrapping `TextBlock` bounded only by `MaxWidth` inside a
+virtualizing list's item template**:
+
+```xml
+<ListView ItemsSource="{Binding Checks}">     <!-- virtualizing by default -->
+  ...
+  <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" MaxWidth="370"/>
+```
+
+The TextBlock's height depends on the width it is given. The panel needs the heights to
+size the viewport. The viewport determines the width. Each pass changes the answer, so
+the layout never converges.
+
+**Fix** — break the loop at both ends:
+
+1. Give the wrapping TextBlock a **fixed `Width`**, not a `MaxWidth`. Its height is then
+   computable in one pass.
+2. Set `VirtualizingPanel.IsVirtualizing="False"` on lists that hold tens of rows.
+   Virtualization buys nothing there and it is the mechanism of the loop.
+
+The Logs list is the exception and stays virtualizing: it holds thousands of entries, and
+its item template has no wrapping TextBlock, so it cannot form the loop.
+
+**Why it took so long to find.** The crash is in the FIRST page the app shows, so it
+would hit every user on every launch — and it was completely invisible until
+TROUBLESHOOTING #19 was fixed, because before that nothing ever created the window, so
+nothing was ever laid out. One bug was hiding the other.
+
+`ItemsControl` is not virtualizing by default, so the pages that use it were never
+affected.
+
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

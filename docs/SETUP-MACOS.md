@@ -27,12 +27,49 @@ refuses to improvise.
 
 1. Install Xcode from the App Store and open it once to accept the licence.
 2. `brew install cirruslabs/cli/tart` (or use Preflight's `Fix`).
-3. Install Runner Forge and open it.
+3. Install Runner Forge — see **Installing Runner Forge** below — and open it.
 4. Work the Preflight page top to bottom.
 
 No compiler is installed *for CI use* on this host — the CI toolchain lives in the Tart
 image. Xcode is required on the host because the image build provisions from it and
 because notarization uses `xcrun`.
+
+## Installing Runner Forge
+
+Every push builds and packages the app, so take the artifact from the latest green
+`ci-macos-app` run on the Actions tab:
+
+| Artifact | What it is |
+| --- | --- |
+| `RunnerForge-macos-dmg` | `RunnerForge.dmg`. Open it and drag `RunnerForge.app` onto the Applications alias inside. |
+| `RunnerForge-macos-app` | the `.app` as a tarball, for scripted installs: `tar -xpf RunnerForge-app.tar`. Use `-p`, or the bundle's symlinks are not restored. |
+
+**The DMG that CI produces is ad-hoc signed, and Gatekeeper will refuse it.** That is
+not a bug to work around: a hosted runner has no Developer ID identity, so there is
+nothing to sign with. It runs only on the machine that built it. To produce a build
+that opens on any Mac, run the packaging step somewhere that has the certificate:
+
+```bash
+cd app-macos
+./build.sh --sign "Developer ID Application: Your Name (TEAMID)" --notarize
+```
+
+with `APPLE_ASC_ISSUER_ID`, `APPLE_ASC_KEY_ID` and `APPLE_ASC_PRIVATE_KEY` in the
+environment. That path signs nested code inside-out (never `codesign --deep`, which
+re-signs nested code with the outer bundle's entitlements), submits to `notarytool`,
+and **staples** the ticket into the DMG. Stapling is not optional: without the ticket
+inside the artifact, every machine but the build machine has to ask Apple at launch
+and fails closed when it cannot.
+
+Runner Forge runs with **Hardened Runtime on and App Sandbox off**, and the CI job
+asserts that from the signature rather than from the entitlements file. The reason is
+in `Sources/RunnerForge/Resources/RunnerForge.entitlements`: the app's whole job is to
+launch `tart`, `docker`, `codesign`, `notarytool` and `wraptool`, and a sandboxed
+process cannot launch any of them.
+
+The app is **arm64 only**, deliberately. Tart drives Apple's Virtualization framework,
+which does not exist on Intel; Preflight reports an Intel Mac as a hard block with no
+fix, so an x86_64 slice would only produce an app that launches and can do nothing.
 
 ## Building the Tart image
 

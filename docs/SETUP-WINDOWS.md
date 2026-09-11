@@ -30,11 +30,34 @@ not WSL, not process isolation, not a third-party shim.
 2. Enable the Windows features (Preflight's `Fix` button runs DISM), then reboot.
 3. Install Docker Desktop at or above the pinned minimum.
 4. Switch Docker to Windows containers — Preflight can do it for you.
-5. Install Runner Forge and open it.
+5. Install Runner Forge — see **Installing Runner Forge** below — and open it.
 6. Work the Preflight page top to bottom until every row is Pass or an accepted Warn.
 
 Nothing else gets installed on this machine. No Visual Studio, no CMake, no Git for
 Windows, no Python. Those live inside the container image.
+
+## Installing Runner Forge
+
+Every push builds and packages the app, so take the artifacts from the latest green
+`ci-windows-app` run on the Actions tab:
+
+| Artifact | What it is |
+| --- | --- |
+| `RunnerForge-windows-msi` | `RunnerForge.msi`. Double-click it. It installs to `C:\Program Files\Runner Forge` and adds a Start menu entry. |
+| `RunnerForge-windows-programfiles` | the same payload as loose files, if you would rather not run an installer: unzip it anywhere and run `RunnerForge.exe`. |
+
+`RunnerForge.exe` is a **single self-contained file** — it carries its own .NET
+runtime, so nothing has to be installed first. The MSI also lays down the `scripts/`
+and `templates/` directories beside it: those are program files, not extras. The
+Export page renders the templates and the runner classes execute the scripts, so an
+install missing them is an install with a broken Export page.
+
+Upgrading is a matter of running a newer MSI over the old one. The package's
+`UpgradeCode` is fixed for the life of the product, so Windows replaces the previous
+version rather than installing a second copy alongside it.
+
+To build the MSI yourself, see the Stage G reproduction steps in
+[VERIFICATION.md](VERIFICATION.md).
 
 ## Building the images
 

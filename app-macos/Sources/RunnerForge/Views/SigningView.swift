@@ -243,22 +243,10 @@ public struct SigningView: View {
                         }
 
                         ForEach(model.identities) { identity in
-                            HStack(spacing: 8) {
-                                Image(systemName: identity.name == model.signId
-                                      ? "largecircle.fill.circle" : "circle")
-                                    .foregroundStyle(identity.name == model.signId ? .accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(identity.name).font(.body)
-                                    Text(identity.hash).font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if identity.untrusted {
-                                    StatusBadge(text: "self-signed", tint: .orange)
-                                }
+                            IdentityRow(identity: identity,
+                                        isSelected: identity.name == model.signId) {
+                                model.selectIdentity(identity)
                             }
-                            .contentShape(Rectangle())
-                            .onTapGesture { model.selectIdentity(identity) }
                         }
 
                         Divider()
@@ -408,5 +396,45 @@ public struct SigningView: View {
         if panel.runModal() == .OK, let url = panel.url {
             model.dryRunOutputPath = url.path
         }
+    }
+}
+
+/// One row in the signing-identity list.
+///
+/// This is a separate view, and `isSelected` is a plain Bool passed in, because
+/// the inline version — two ternaries inferring SwiftUI types inside a ForEach
+/// inside a GroupBox — made the Swift type-checker give up with "unable to
+/// type-check this expression in reasonable time". Splitting the expression is
+/// the documented remedy, and giving the subview concrete parameter types is
+/// what actually makes it cheap to check.
+private struct IdentityRow: View {
+    let identity: SigningService.SigningIdentity
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    private var symbolName: String { isSelected ? "largecircle.fill.circle" : "circle" }
+    private var symbolTint: Color { isSelected ? Color.accentColor : Color.secondary }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName)
+                .foregroundStyle(symbolTint)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(identity.name)
+                    .font(.body)
+                Text(identity.hash)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if identity.untrusted {
+                StatusBadge(text: "self-signed", tint: .orange)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
     }
 }

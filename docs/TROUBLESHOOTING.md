@@ -393,5 +393,51 @@ ship. Compare the release assets: `darwin_arm64` returns 206, `linux_amd64` retu
 image template is syntax-checked on Linux and genuinely validated on the Apple Silicon
 Mac. Any claim that the macOS image is "verified" must come from that machine.
 
+---
+
+## 18. SwiftUI: "unable to type-check this expression in reasonable time"
+
+**Symptom** — the macOS app compiles on the Mac runner until one view, and then:
+
+```
+SigningView.swift:247:33: error: the compiler is unable to type-check this
+expression in reasonable time; try breaking up the expression into distinct
+sub-expressions
+```
+
+The named line is usually innocuous. Here it was two ternaries inside a `ForEach`
+inside a `GroupBox`:
+
+```swift
+Image(systemName: identity.name == model.signId ? "largecircle.fill.circle" : "circle")
+    .foregroundStyle(identity.name == model.signId ? .accentColor : .secondary)
+```
+
+**Cause** — SwiftUI view builders are deeply generic, and every `.foregroundStyle(...)`
+with a leading-dot argument makes the solver consider every conforming type. Each
+ternary multiplies the candidate set, and the cost is exponential in the nesting, not
+linear in the line count. The compiler is not wrong about the code; it has given up
+searching.
+
+**Fix** — extract the row into its own `View` with **concrete** parameter types, and
+hoist the conditions into typed properties:
+
+```swift
+private struct IdentityRow: View {
+    let identity: SigningService.SigningIdentity
+    let isSelected: Bool
+    private var symbolName: String { isSelected ? "largecircle.fill.circle" : "circle" }
+    private var symbolTint: Color { isSelected ? Color.accentColor : Color.secondary }
+    ...
+}
+```
+
+Naming `Color` explicitly instead of `.accentColor` is the part that actually does the
+work: it removes the type variable the solver was searching over. Splitting the file
+alone does not help if the sub-expressions stay equally inferred.
+
+Note that `swiftc -parse` cannot catch this — it is a type-checking failure, not a
+syntax one — so on a Linux development machine it only ever appears in CI.
+
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

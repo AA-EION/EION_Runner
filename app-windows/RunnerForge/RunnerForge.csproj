@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>RunnerForge</RootNamespace>
+    <AssemblyName>RunnerForge</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+
+    <!-- Warnings are errors. A warning nobody reads is a bug nobody finds. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+
+    <!-- Lets the WPF project COMPILE on a non-Windows machine. It still only
+         RUNS on Windows; this only makes the Windows targeting packs
+         restorable elsewhere, which is what allows CI and local development to
+         catch C# errors without a Windows box in the loop. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <Version>1.0.0</Version>
+    <Product>Runner Forge</Product>
+    <Company>EION Studios</Company>
+    <Description>Turn a Windows PC into clean, containerized, self-hosted GitHub Actions runners.</Description>
+    <Copyright>Copyright (c) 2026 EION Studios</Copyright>
+  </PropertyGroup>
+
+  <!-- Publish settings from the spec: a single self-contained file, no runtime
+       install required on the user's machine. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Trimming is OFF: WPF is not trim-safe and the resulting app fails at
+         runtime in ways that only appear on the user's machine. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <!-- The WPF SDK's implicit usings do not include System.IO, and this app is
+       full of path and file work. Declaring it once here beats repeating it in
+       every service. -->
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WMI, for the preflight checks that ask Windows about itself: edition,
+         optional features, CPU virtualization flags and attached USB devices.
+         Windows-only by nature, which is why every call site is guarded with
+         [SupportedOSPlatform("windows")]. -->
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

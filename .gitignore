@@ -55,3 +55,7 @@ packer_cache/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- .NET ---------------------------------------------------------------------
+app-windows/**/bin/
+app-windows/**/obj/

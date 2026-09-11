@@ -1,0 +1,72 @@
+<UserControl x:Class="RunnerForge.Views.SigningPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignHeight="600" d:DesignWidth="820">
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="Signing" FontSize="22" FontWeight="Bold" Margin="0,0,0,8"/>
+
+        <Border DockPanel.Dock="Top" Background="#FEF7E0" BorderBrush="#F9AB00" BorderThickness="1"
+                Padding="12" Margin="0,0,0,12"
+                Visibility="{Binding HasUnmetRequirements, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding WarningText}" TextWrapping="Wrap" Foreground="#8A6D00"/>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="AAX signing mode" FontWeight="Bold" Margin="0,0,0,6"/>
+                <ListBox ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedMode}"
+                         BorderThickness="0" Margin="0,0,0,12"/>
+
+                <TextBlock Text="Requirements for the selected mode" FontWeight="Bold" Margin="0,0,0,6"/>
+                <ItemsControl ItemsSource="{Binding Requirements}" Margin="0,0,0,16">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,2">
+                                <TextBlock Width="18" FontWeight="Bold"
+                                           Text="{Binding Satisfied, Converter={StaticResource BoolToTick}}"/>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" MaxWidth="640"/>
+                                    <TextBlock Text="{Binding HowToFix}" Foreground="#666" TextWrapping="Wrap"
+                                               MaxWidth="640" FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="Windows Authenticode (Azure Trusted Signing)" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#666" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="Independent of AAX signing. A cloud HSM holds the key, which is why this can run inside the container while iLok signing cannot."/>
+                <ComboBox ItemsSource="{Binding WindowsProviders}" SelectedItem="{Binding WindowsProvider}"
+                          Width="260" HorizontalAlignment="Left" Margin="0,0,0,6"/>
+                <TextBox Text="{Binding AzureEndpoint, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding AzureAccount, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding AzureProfile, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,16"/>
+
+                <TextBlock Text="macOS Developer ID" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#666" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="Certificate names, not keys, so they are safe in forge.json. Turning notarization off means the artifact fails Gatekeeper on any machine but the one that built it."/>
+                <TextBox Text="{Binding AppleTeamId, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding DevIdAppIdentity, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding DevIdInstallerIdentity, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <CheckBox Content="Notarize and staple" IsChecked="{Binding Notarize}" Margin="0,4,0,16"/>
+
+                <TextBlock Text="PACE identifiers" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBox Text="{Binding PaceAccount, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding PaceWcGuid, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding PaceSignId, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,4"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

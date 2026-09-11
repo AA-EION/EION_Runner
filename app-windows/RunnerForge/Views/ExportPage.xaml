@@ -1,0 +1,39 @@
+<UserControl x:Class="RunnerForge.Views.ExportPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignHeight="600" d:DesignWidth="820">
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="Export" FontSize="22" FontWeight="Bold" Margin="0,0,0,8"/>
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="#666"
+                   Text="Renders the workflow YAML and the secrets checklist from your configuration. Paste the result into .github/workflows/ in your project. This is where plugin specifics belong: the runner stays generic."/>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="Project name" VerticalAlignment="Center"/>
+            <TextBox Text="{Binding ProjectName, UpdateSourceTrigger=PropertyChanged}" Width="180" Margin="8,0,16,0"/>
+            <TextBlock Text="Source dir" VerticalAlignment="Center"/>
+            <TextBox Text="{Binding SourceDir, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="8,0,16,0"/>
+            <Button Content="Render" Command="{Binding RenderCommand}" Padding="12,4"/>
+            <TextBlock Text="{Binding Status}" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <TabControl>
+            <TabItem Header="workflow-build.yml">
+                <TextBox Text="{Binding RenderedBuildWorkflow, Mode=OneWay}" IsReadOnly="True"
+                         FontFamily="Consolas" FontSize="12" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+            </TabItem>
+            <TabItem Header="workflow-sign.yml">
+                <TextBox Text="{Binding RenderedSignWorkflow, Mode=OneWay}" IsReadOnly="True"
+                         FontFamily="Consolas" FontSize="12" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+            </TabItem>
+            <TabItem Header="secrets checklist">
+                <TextBox Text="{Binding RenderedChecklist, Mode=OneWay}" IsReadOnly="True"
+                         FontFamily="Consolas" FontSize="12" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</UserControl>

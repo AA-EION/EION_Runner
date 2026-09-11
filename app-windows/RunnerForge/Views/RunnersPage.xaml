@@ -1,0 +1,90 @@
+<UserControl x:Class="RunnerForge.Views.RunnersPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignHeight="600" d:DesignWidth="820">
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="Runners" FontSize="22" FontWeight="Bold" Margin="0,0,0,8"/>
+
+        <Border DockPanel.Dock="Top" Background="#FDECEA" BorderBrush="#D93025" BorderThickness="1"
+                Padding="12" Margin="0,0,0,12"
+                Visibility="{Binding StrayBannerVisible, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <TextBlock Text="{Binding StrayBannerText}" TextWrapping="Wrap" Foreground="#B3261E"/>
+                <Button Content="Acknowledge" Command="{Binding AcknowledgeStraysCommand}"
+                        HorizontalAlignment="Left" Margin="0,8,0,0" Padding="12,4"/>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#F1F3F4" Padding="12" Margin="0,0,0,12">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Last proof:" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding LastProofBadge}" Margin="8,0,0,0" FontWeight="Bold"/>
+                    <Button Content="Run self-test" Command="{Binding RunSelfTestCommand}"
+                            Margin="16,0,0,0" Padding="12,4"/>
+                    <TextBlock Text="{Binding SelfTestStatus}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock Text="{Binding LastProofDetail}" Foreground="#555" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Cards}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="#DADCE0" BorderThickness="1" Padding="12" Margin="0,0,0,10"
+                                CornerRadius="4">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <CheckBox IsChecked="{Binding Enabled}" VerticalAlignment="Center"
+                                              IsEnabled="{Binding IsAvailable}"/>
+                                    <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="15"
+                                               Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ClassId}" Foreground="#666" Margin="10,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <TextBlock Text="{Binding LabelsText}" Foreground="#666" Margin="0,6,0,0"
+                                           FontFamily="Consolas"/>
+
+                                <TextBlock Text="{Binding NotContainerizedReason}" TextWrapping="Wrap"
+                                           Foreground="#8A6D00" Margin="0,6,0,0"/>
+
+                                <TextBlock Foreground="#B3261E" Margin="0,6,0,0" TextWrapping="Wrap">
+                                    <Run Text="Unavailable: "/><Run Text="{Binding BlockedReason}"/>
+                                </TextBlock>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                    <TextBlock Text="Replicas" VerticalAlignment="Center"/>
+                                    <TextBox Text="{Binding Replicas}" Width="50" Margin="8,0,0,0"
+                                             IsEnabled="{Binding ReplicasEnabled}"/>
+                                    <Button Content="Start" Padding="12,4" Margin="16,0,0,0"
+                                            IsEnabled="{Binding IsAvailable}"
+                                            Command="{Binding DataContext.StartCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            CommandParameter="{Binding}"/>
+                                    <Button Content="Stop" Padding="12,4" Margin="8,0,0,0"
+                                            Command="{Binding DataContext.StopCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            CommandParameter="{Binding}"/>
+                                </StackPanel>
+
+                                <ItemsControl ItemsSource="{Binding Replicas_}" Margin="0,8,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Foreground="#444">
+                                                <Run Text="#"/><Run Text="{Binding Index}"/>
+                                                <Run Text="  "/><Run Text="{Binding State}"/>
+                                                <Run Text="  "/><Run Text="{Binding RunnerName}"/>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

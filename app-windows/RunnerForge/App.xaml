@@ -1,0 +1,11 @@
+<Application x:Class="RunnerForge.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:RunnerForge"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <!-- Converters used by the pages. Declared once, application-wide. -->
+        <local:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
+        <local:BoolToTickConverter x:Key="BoolToTick"/>
+    </Application.Resources>
+</Application>

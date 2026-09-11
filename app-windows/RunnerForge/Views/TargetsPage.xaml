@@ -1,0 +1,36 @@
+<UserControl x:Class="RunnerForge.Views.TargetsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignHeight="600" d:DesignWidth="820">
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="Targets" FontSize="22" FontWeight="Bold" Margin="0,0,0,8"/>
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="#666"
+                   Text="Which repositories these runners serve. Verify access reports 200, 404 and 403 distinctly: GitHub returns 404 rather than 403 for a repository the App cannot see at all."/>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="Owner" VerticalAlignment="Center"/>
+            <TextBox Text="{Binding Owner, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="8,0,16,0"/>
+            <TextBlock Text="Add repository" VerticalAlignment="Center"/>
+            <TextBox Text="{Binding NewRepo, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="8,0,8,0"/>
+            <Button Content="Add" Command="{Binding AddRepoCommand}" Padding="12,4"/>
+            <Button Content="Verify access" Command="{Binding VerifyAccessCommand}" Padding="12,4" Margin="16,0,0,0"/>
+        </StackPanel>
+
+        <ListView ItemsSource="{Binding Repos}">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Repository" Width="240" DisplayMemberBinding="{Binding Name}"/>
+                    <GridViewColumn Header="Access" Width="460">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding AccessResult}" TextWrapping="Wrap" MaxWidth="450"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </DockPanel>
+</UserControl>

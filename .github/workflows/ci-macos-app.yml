@@ -206,7 +206,53 @@ jobs:
             exit 1
           fi
 
-          echo "smoke test passed: the app launches, stays up and logs no errors"
+          # ---------------------------------------------------------------
+          # SECOND LAUNCH. Everything above is a FIRST run: no config exists,
+          # the app writes defaults and opens. The failure reported on Windows
+          # was on the SECOND run, where the app reads back the file it just
+          # wrote — and rejected it, because the fields the GUI exists to
+          # collect were still empty. A runner is fresh every time, so a single
+          # launch could never have caught it. See TROUBLESHOOTING #22.
+          # ---------------------------------------------------------------
+          echo ''
+          echo 'relaunching, now that a config exists'
+          config="$HOME/Library/Application Support/RunnerForge/forge.json"
+          if [ ! -f "$config" ]; then
+            echo "The first launch did not write $config, so this check would prove nothing."
+            exit 1
+          fi
+
+          rm -f "$log"
+
+          "$binary" > /tmp/runnerforge-stdout2.log 2>/tmp/runnerforge-stderr2.log &
+          pid2=$!
+
+          survived=1
+          for _ in $(seq 1 10); do
+            sleep 1
+            if ! kill -0 "$pid2" 2>/dev/null; then survived=0; break; fi
+          done
+
+          if [ "$survived" -eq 0 ]; then
+            echo "--- stdout ---"; cat /tmp/runnerforge-stdout2.log
+            echo "--- stderr ---"; cat /tmp/runnerforge-stderr2.log
+            echo 'The app starts once and then refuses to start again. That is the'
+            echo 'signature of a config it writes but will not read back.'
+            exit 1
+          fi
+
+          kill "$pid2" 2>/dev/null || true
+          sleep 2
+          kill -9 "$pid2" 2>/dev/null || true
+
+          if [ -f "$log" ] && grep -q '\[Error\]' "$log"; then
+            cat "$log"
+            echo 'The second launch logged errors reading its own config.'
+            exit 1
+          fi
+
+          echo 'second launch survived with no errors'
+          echo "smoke test passed: the app launches twice, stays up and logs no errors"
 
       # The .app is tarred and the DMG is not, for the reason in the header.
       - name: Tar the app bundle

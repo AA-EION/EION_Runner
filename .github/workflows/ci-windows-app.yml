@@ -233,7 +233,57 @@ jobs:
           Select-String -Path $log -Pattern 'starting|services ready|main window is open' |
             ForEach-Object { Write-Host "  $($_.Line.Trim())" }
 
-          Write-Host 'smoke test passed: the app opens a titled window and logs no errors'
+          # ---------------------------------------------------------------
+          # SECOND LAUNCH. Everything above is a FIRST run: no config exists,
+          # the app writes defaults and opens. The reported failure was on the
+          # SECOND run, where the app reads back the file it just wrote — and
+          # rejected it, because the fields the GUI exists to collect were
+          # still empty. A runner is fresh every time, so a single launch could
+          # never have caught that. See TROUBLESHOOTING #22.
+          # ---------------------------------------------------------------
+          Write-Host ''
+          Write-Host 'relaunching, now that a config exists'
+          if (-not (Test-Path $env:ProgramData\RunnerForge\forge.json)) {
+            throw 'The first launch did not write a config, so the second-run check would prove nothing.'
+          }
+
+          Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+
+          $second = Start-Process -FilePath $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          $secondHandle = [IntPtr]::Zero
+
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            $second.Refresh()
+
+            if ($second.HasExited) {
+              Write-Host "RunnerForge.exe exited on the SECOND launch with code $($second.ExitCode)."
+              Show-Diagnostics
+              throw ('The app starts once and then refuses to start again. That is the ' +
+                     'signature of a config it writes but will not read back.')
+            }
+
+            if ($second.MainWindowHandle -ne [IntPtr]::Zero) { $secondHandle = $second.MainWindowHandle; break }
+          }
+
+          if ($secondHandle -eq [IntPtr]::Zero) {
+            $second | Stop-Process -Force -ErrorAction SilentlyContinue
+            Show-Diagnostics
+            throw 'The second launch never opened a window.'
+          }
+
+          Start-Sleep -Seconds 5
+          $second | Stop-Process -Force
+
+          $secondErrors = Get-Content $logPath | Where-Object { $_ -match '\[Error' }
+          if ($secondErrors) {
+            Show-Diagnostics
+            throw "The second launch logged $($secondErrors.Count) error(s) reading its own config."
+          }
+
+          Write-Host "second launch opened window $secondHandle with no errors"
+          Write-Host 'smoke test passed: the app opens a titled window, twice, and logs no errors'
 
       - name: Install WiX
         run: dotnet tool install --global wix --version 5.0.2

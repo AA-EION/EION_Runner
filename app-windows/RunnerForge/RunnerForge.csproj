@@ -35,7 +35,23 @@
     <PublishSingleFile>true</PublishSingleFile>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- InvariantGlobalization MUST stay false. It is the obvious-looking
+         size win on a self-contained publish and it BREAKS EVERY BINDING IN
+         THE APP. Every FrameworkElement's Language defaults to the XmlLanguage
+         "en-US"; every BindingExpression that transfers a value asks that
+         XmlLanguage for a specific culture; and with globalization invariant
+         there is no non-neutral culture to find, so the lookup throws:
+
+           System.InvalidOperationException:
+             Cannot find non-neutral culture related to 'en-us'.
+               at System.Windows.Markup.XmlLanguage.GetSpecificCulture()
+               at System.Windows.Data.BindingExpressionBase.GetCulture()
+
+         It throws once per binding, forever, so the window never renders. It
+         is invisible in Debug (this PropertyGroup is Release-only) and
+         invisible in every test, because the failure needs a live visual tree.
+         WPF requires ICU. See TROUBLESHOOTING #20. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <!-- Trimming is OFF: WPF is not trim-safe and the resulting app fails at
          runtime in ways that only appear on the user's machine. -->

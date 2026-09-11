@@ -185,18 +185,57 @@ public partial class App : Application
         }
     }
 
+    /// <summary>True while a MessageBox from the handler below is on screen.</summary>
+    private bool _reportingError;
+
+    /// <summary>Exception messages already shown once. Kept so a repeat is silent.</summary>
+    private readonly HashSet<string> _reportedErrors = [];
+
     private void OnDispatcherUnhandledException(
         object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
+        // Logging is unconditional: every occurrence goes to the file, however
+        // many there are, because the count is itself diagnostic.
         Services?.LogBus.Error("app", $"unhandled: {e.Exception}");
-
-        MessageBox.Show(
-            $"Runner Forge hit an unexpected error.\n\n{e.Exception.Message}\n\n"
-            + "The app will stay open. The full error is on the Logs page.",
-            "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
 
         // Handled, so one bad page does not take the whole app down with it.
         e.Handled = true;
+
+        // ---------------------------------------------------------------
+        // Everything below exists because reporting an error can BE the
+        // crash. MessageBox.Show pumps a nested message loop, and that loop
+        // runs the very dispatcher work that threw — the binding engine, the
+        // layout pass — on top of the stack frames already there. An
+        // exception that recurs (a broken binding recurs once per binding,
+        // forever) therefore stacks a dialog on a dialog on a dialog until
+        // the thread runs out of stack and Windows kills the process with
+        // 0xC00000FD, STATUS_STACK_OVERFLOW. That happened: 33 reports, then
+        // a stack overflow, and the modal dialogs meant the user saw neither
+        // the app nor the error.
+        //
+        // So: never re-enter, and never show the same message twice.
+        // ---------------------------------------------------------------
+        if (_reportingError) return;
+
+        string message = e.Exception.Message;
+        if (!_reportedErrors.Add(message))
+        {
+            return;
+        }
+
+        _reportingError = true;
+        try
+        {
+            MessageBox.Show(
+                $"Runner Forge hit an unexpected error.\n\n{message}\n\n"
+                + "The app will stay open. The full error is on the Logs page and in:\n"
+                + LogBus.DefaultLogPath,
+                "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _reportingError = false;
+        }
     }
 
     /// <summary>

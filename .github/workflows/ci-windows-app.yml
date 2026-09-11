@@ -186,11 +186,35 @@ jobs:
           Write-Host "window title:  $title"
           if (-not $title) { throw 'The window has no title, which means it is not MainWindow.' }
 
+          # Let it settle, so the bindings on the first page have all run.
+          Start-Sleep -Seconds 5
+
           # Stop-Process rather than CloseMainWindow: a graceful close runs the
           # drain/reap/sweep in OnExit, which is correct behaviour and much
           # slower than this check needs.
           $process | Stop-Process -Force
-          Write-Host 'smoke test passed: the app opens a titled window'
+
+          # ---------------------------------------------------------------
+          # An open window is NOT proof the app works. InvariantGlobalization
+          # made every binding in the app throw, and a variant of that with
+          # one fewer broken binding would have opened a window and passed
+          # every check above with nothing on screen. So the log gets read:
+          # a clean startup logs no errors at all, and any error before the
+          # user has touched anything is a defect by definition.
+          # ---------------------------------------------------------------
+          $log = Join-Path $env:LOCALAPPDATA 'RunnerForge\runnerforge.log'
+          if (-not (Test-Path $log)) { throw "The app opened a window but wrote no log at $log." }
+
+          $errors = Get-Content $log | Where-Object { $_ -match '\[Error' }
+          if ($errors) {
+            Write-Host ''
+            Write-Host "--- $($errors.Count) error line(s) logged during a startup nobody touched ---"
+            Show-Diagnostics
+            throw ("The app logged $($errors.Count) error(s) while merely starting up. " +
+                   'A window on screen is not the same as a working app.')
+          }
+
+          Write-Host 'smoke test passed: the app opens a titled window and logs no errors'
 
       - name: Install WiX
         run: dotnet tool install --global wix --version 5.0.2

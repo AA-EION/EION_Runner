@@ -14,17 +14,7 @@
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="#666"
                    Text="What is missing on this machine, and what can be fixed from here. A Fail blocks the runner classes it names; a hard block has no workaround and says so."/>
 
-        <!-- VirtualizingPanel.IsVirtualizing="False" and a FIXED Width on the
-             wrapping TextBlock are both load-bearing. A wrapping TextBlock whose
-             width is only bounded by MaxWidth has a height that depends on the
-             width it is given, and inside a virtualizing panel that feeds back:
-             the panel sizes the viewport, the wrap changes the height, the
-             viewport changes, InitializeViewport calls UpdateLayout, and the
-             measure pass re-enters itself until the stack overflows
-             (0xC00000FD). These lists hold tens of rows, so virtualization buys
-             nothing and removing it removes the mechanism. See TROUBLESHOOTING #20. -->
-        <ListView ItemsSource="{Binding Checks}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                  VirtualizingPanel.IsVirtualizing="False">
+        <ListView ItemsSource="{Binding Checks}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Status" Width="80" DisplayMemberBinding="{Binding Status}"/>
@@ -32,7 +22,7 @@
                     <GridViewColumn Header="Detail" Width="380">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" Width="370"/>
+                                <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" MaxWidth="370"/>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>

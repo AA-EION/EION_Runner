@@ -487,21 +487,78 @@ impossible on macOS, but a crash during launch is not.
 
 ---
 
-## 20. The WPF app crashes on startup with 0xC00000FD, or 0xC0000005
+## 20. The WPF app crashes on startup with 0xC00000FD, and nothing ever renders
 
-**Symptom** — the window never appears. The process lives for ten to thirty seconds
-and dies. The Windows Application event log says:
+**Symptom** — the window never appears. The process lives for ten to thirty seconds and
+dies. The Windows Application event log says:
 
 ```
 Faulting application name: RunnerForge.exe
-Faulting module name: msvcrt.dll
+Faulting module name: MSCTF.dll
 Exception code: 0xc00000fd
 ```
 
-`0xC00000FD` is `STATUS_STACK_OVERFLOW`. The same fault sometimes surfaces as
-`0xC0000005` (access violation) instead, depending on where the stack runs out.
+`0xC00000FD` is `STATUS_STACK_OVERFLOW`. Earlier attempts surfaced as `0xC0000005`
+instead, depending on where the stack happened to run out. **Both codes, and the
+faulting module, are noise.** See "the wrong diagnosis" below.
 
-**Cause** — a WPF layout feedback loop. The managed stack, read outermost-first, is:
+**Cause** — `InvariantGlobalization`. The app's Release publish settings had:
+
+```xml
+<InvariantGlobalization>true</InvariantGlobalization>
+```
+
+which writes `System.Globalization.Invariant: true` and
+`System.Globalization.PredefinedCulturesOnly: true` into `RunnerForge.runtimeconfig.json`.
+It looks like a free size win on a self-contained publish. **It breaks every data binding
+in a WPF app.**
+
+Every `FrameworkElement` has a `Language` property that defaults to the `XmlLanguage`
+`en-US`. Every `BindingExpression` that transfers a value asks that `XmlLanguage` for a
+specific `CultureInfo`. With globalization invariant there is no non-neutral culture to
+find, so the lookup throws:
+
+```
+System.InvalidOperationException: Cannot find non-neutral culture related to 'en-us'.
+   at System.Windows.Markup.XmlLanguage.GetSpecificCulture()
+   at System.Windows.Data.BindingExpressionBase.GetCulture()
+   at System.Windows.Data.BindingExpression.TransferValue(...)
+```
+
+Once per binding. Forever. **WPF requires ICU** — this setting is for console and service
+apps, not for anything with a visual tree.
+
+**Fix** — set it to `false` (and leave a comment saying why, because the next person to
+look for publish-size savings will find it again):
+
+```xml
+<InvariantGlobalization>false</InvariantGlobalization>
+```
+
+On `win-x64` this costs essentially nothing in size: .NET uses the ICU that ships with
+Windows rather than bundling its own.
+
+**The second bug, which the first one exposed** — the crash was not the exception. It was
+the error *reporting*. `App.OnStartup` installed a `DispatcherUnhandledException` handler
+that logged, showed a `MessageBox`, and set `e.Handled = true`.
+
+`MessageBox.Show` pumps a nested message loop. That loop runs the same dispatcher work
+that threw — the binding engine, the layout pass — on top of the stack frames already
+there. A recurring exception therefore stacks a dialog on a dialog on a dialog until the
+thread runs out of stack. The log shows 33 reports and then the process is gone.
+
+So an unhandled-exception handler must never re-enter:
+
+```csharp
+if (_reportingError) return;                 // a report is already on screen
+if (!_reportedErrors.Add(e.Exception.Message)) return;   // already shown once
+```
+
+Logging stays unconditional — the *count* is diagnostic. Only the modal dialog is
+suppressed.
+
+**The wrong diagnosis, recorded deliberately.** The first read of this was a WPF layout
+feedback loop: the stack really did show
 
 ```
 VirtualizingStackPanel.<InitializeViewport>b__0()
@@ -509,40 +566,28 @@ ContextLayoutManager.UpdateLayout()
 Window.MeasureOverride ... Grid.MeasureCell ... DockPanel.MeasureOverride
 ```
 
-repeated until the stack is gone. A `VirtualizingStackPanel` is measuring, calling
-`UpdateLayout()` to settle its viewport, and that re-enters the very measure pass it
-was called from.
+and there really were wrapping `TextBlock`s bounded only by `MaxWidth` inside
+virtualizing `ListView`s. It is a plausible mechanism, it fits the stack, and it was
+wrong. Those frames were where the *nested message loop* happened to be standing, not the
+cause. The "fix" — fixed `Width` instead of `MaxWidth`, `IsVirtualizing="False"` on six
+lists — changed nothing, and the fixed widths were a regression in their own right, since
+GridView columns are user-resizable and a fixed-width cell will not reflow. It was
+reverted.
 
-The trigger is a **wrapping `TextBlock` bounded only by `MaxWidth` inside a
-virtualizing list's item template**:
+**What actually found it** was reading the app's own log instead of the stack trace. The
+log had the real exception, in plain words, at the top — it just hadn't been looked at,
+because a stack trace with a recognisable pattern in it is more persuasive than it
+deserves to be. A stack trace tells you where a process died. It does not necessarily
+tell you what went wrong.
 
-```xml
-<ListView ItemsSource="{Binding Checks}">     <!-- virtualizing by default -->
-  ...
-  <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" MaxWidth="370"/>
-```
-
-The TextBlock's height depends on the width it is given. The panel needs the heights to
-size the viewport. The viewport determines the width. Each pass changes the answer, so
-the layout never converges.
-
-**Fix** — break the loop at both ends:
-
-1. Give the wrapping TextBlock a **fixed `Width`**, not a `MaxWidth`. Its height is then
-   computable in one pass.
-2. Set `VirtualizingPanel.IsVirtualizing="False"` on lists that hold tens of rows.
-   Virtualization buys nothing there and it is the mechanism of the loop.
-
-The Logs list is the exception and stays virtualizing: it holds thousands of entries, and
-its item template has no wrapping TextBlock, so it cannot form the loop.
-
-**Why it took so long to find.** The crash is in the FIRST page the app shows, so it
-would hit every user on every launch — and it was completely invisible until
-TROUBLESHOOTING #19 was fixed, because before that nothing ever created the window, so
-nothing was ever laid out. One bug was hiding the other.
-
-`ItemsControl` is not virtualizing by default, so the pages that use it were never
-affected.
+**Why no earlier check caught it.** The Release-only `PropertyGroup` means Debug builds
+are fine, so nothing local reproduces it. The 73 unit tests pass, because the failure
+needs a live visual tree. The publish is genuinely one self-contained file and the MSI
+genuinely contains all its program files. Every check asked whether the artifact was
+correct; none asked whether the program worked. The smoke test now also reads the
+startup log and fails on any `[Error]` line, because **an open window is not proof the
+app works** — one fewer broken binding and this would have opened a window with nothing
+in it and passed.
 
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

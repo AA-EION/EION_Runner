@@ -11,7 +11,12 @@
 
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
             <TextBlock Text="Owner" VerticalAlignment="Center"/>
-            <TextBox Text="{Binding Owner, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="8,0,16,0"/>
+            <TextBox Text="{Binding Owner, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="8,0,0,0"/>
+            <TextBlock Text="github.com/OWNER/repo" VerticalAlignment="Center"
+                       Margin="10,0,0,0" Foreground="#777" FontSize="11"/>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
             <TextBlock Text="Add repository" VerticalAlignment="Center"/>
             <TextBox Text="{Binding NewRepo, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="8,0,8,0"/>
             <Button Content="Add" Command="{Binding AddRepoCommand}" Padding="12,4"/>

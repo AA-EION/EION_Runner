@@ -7,6 +7,15 @@
     <DockPanel Margin="16">
         <TextBlock DockPanel.Dock="Top" Text="Runners" FontSize="22" FontWeight="Bold" Margin="0,0,0,8"/>
 
+        <!-- Why a start was refused. Without this the start proceeds, fails
+             minting a JIT config, and reports a GitHub API error that never
+             mentions the empty App ID that actually caused it. -->
+        <Border DockPanel.Dock="Top" Background="#FFF4CE" BorderBrush="#E6C200" BorderThickness="1"
+                Padding="10,7" Margin="0,0,0,12"
+                Visibility="{Binding HasSetupWarning, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding SetupWarning}" TextWrapping="Wrap" Foreground="#5C4400"/>
+        </Border>
+
         <Border DockPanel.Dock="Top" Background="#FDECEA" BorderBrush="#D93025" BorderThickness="1"
                 Padding="12" Margin="0,0,0,12"
                 Visibility="{Binding StrayBannerVisible, Converter={StaticResource BoolToVisibility}}">

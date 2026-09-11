@@ -104,14 +104,61 @@ struct ConfigStoreTests {
         #expect(ConfigStore.validate(root).contains { $0.contains("/signing/mode") })
     }
 
-    @Test("required GitHub fields are each reported by pointer")
-    func emptyGitHubFields() {
+    // ------------------------------------------------------------------
+    // Unconfigured is not invalid.
+    //
+    // These four fields are what the GUI exists to collect. Treating them as
+    // validation errors meant the app wrote a default forge.json on first run
+    // and then refused to load the file it had just written on the second,
+    // leaving no way in at all: the only way to fill them is the window that
+    // would not open. See TROUBLESHOOTING #22.
+    // ------------------------------------------------------------------
+
+    @Test("an unconfigured GitHub section is a setup gap, not a validation error")
+    func emptyGitHubFieldsAreGaps() {
         var root = validRoot()
         root["github"] = ["owner": "", "repos": [], "appId": "", "installationId": ""]
+
         let problems = ConfigStore.validate(root)
         for pointer in ["/github/owner", "/github/appId", "/github/installationId", "/github/repos"] {
-            #expect(problems.contains { $0.hasPrefix(pointer) }, "missing \(pointer)")
+            #expect(!problems.contains { $0.hasPrefix(pointer) }, "\(pointer) must not block loading")
         }
+    }
+
+    @Test("a freshly created default config loads without error")
+    func defaultConfigLoads() {
+        let fresh = ForgeConfig.makeDefault(workDir: "/tmp/rf-work")
+        let data = try! JSONEncoder().encode(fresh)
+        let root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(ConfigStore.validate(root).isEmpty)
+    }
+
+    @Test("every unconfigured field is reported as a gap that names a page and a remedy")
+    func setupGapsNameAPageAndARemedy() {
+        let fresh = ForgeConfig.makeDefault(workDir: "/tmp/rf-work")
+        let gaps = ConfigStore.describeSetupGaps(fresh)
+
+        #expect(gaps.contains { $0.what.lowercased().contains("owner") })
+        #expect(gaps.contains { $0.what.contains("App ID") })
+        #expect(gaps.contains { $0.what.contains("Installation ID") })
+        #expect(gaps.contains { $0.what.lowercased().contains("repository") })
+
+        // A gap the user cannot act on is worse than no gap.
+        let pages = ["Preflight", "Credentials", "Targets", "Runners", "Signing", "Export", "Logs", "Cleanup"]
+        for gap in gaps {
+            #expect(pages.contains(gap.page), "unknown page \(gap.page)")
+            #expect(!gap.howToFix.isEmpty)
+        }
+    }
+
+    @Test("a fully configured config reports no gaps")
+    func configuredConfigHasNoGaps() {
+        var config = ForgeConfig.makeDefault(workDir: "/tmp/rf-work")
+        config.github = GitHubConfig(
+            owner: "example", repos: ["plugin"], appId: "123456", installationId: "7890123")
+
+        #expect(ConfigStore.describeSetupGaps(config).isEmpty)
     }
 
     @Test("a saved config round-trips through the parser")

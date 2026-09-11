@@ -641,6 +641,62 @@ The general rule, which this file has now paid for three times: *any work done
 before the error handlers are installed can only fail silently.* Put the
 handlers first.
 
+
+## 22. "forge.json is not valid: /github/owner must not be empty" on a fresh install
+
+**Symptom** — the app opens a dialog on startup listing the GitHub fields as
+invalid, and refuses to start:
+
+```
+Runner Forge could not start.
+
+forge.json is not valid:
+  /github/owner : must not be empty
+  /github/appId : must not be empty
+  /github/installationId : must not be empty
+  /github/repos : at least one repository is required
+```
+
+**Cause — a bootstrap paradox.** On first run the app finds no config, writes a
+default one, and opens. On the **second** run it reads that file back, validates
+it, and rejects it — because `Validate` treated the four GitHub fields as
+required. So the app refused to load the very file it had just written, and
+there was no way out: **the only way to fill those fields in is the window that
+will not open.**
+
+Worse, on Windows two of the four — `appId` and `installationId` — **had no
+editor anywhere in the app**. Even reaching the window would not have helped.
+The product could not be configured through its own GUI.
+
+**Fix — separate "invalid" from "not configured yet".** They are different
+things and only one of them may block:
+
+| | Blocks loading | Where it surfaces |
+| --- | --- | --- |
+| Malformed JSON, wrong `schemaVersion`, unknown runner class, replicas out of range, **a secret stored in forge.json** | **Yes** | Startup dialog |
+| Empty `owner`, `appId`, `installationId`, `repos`; no runner classes | **No** | Setup banner in the window |
+
+`ConfigStore.Validate` now covers only the first row — the things a text box
+cannot fix. `ConfigStore.DescribeSetupGaps` covers the second and returns, for
+each gap, **the page that fixes it** and where the value comes from. The window
+shows them in a banner whose buttons navigate straight there, and the banner
+disappears on its own once the last one is filled in.
+
+Starting a runner is gated on the same list, and says which fields are missing.
+Without that the start proceeds, fails minting a JIT config, and reports a
+GitHub API error that never mentions the empty App ID that actually caused it.
+
+`appId` and `installationId` now have editors on the **Credentials** page in
+both apps, in a "GitHub App" group beside the private key they belong to.
+Neither is a secret — both are shown openly in the GitHub UI — and that is
+where the macOS app already put them, so the two apps still teach the same
+layout.
+
+**The general rule.** A GUI application's config file has two populations of
+field: ones the program writes and ones the person writes. Validating the second
+population at load time turns first-run into a dead end. Validate what the
+program produced; *report* what the person has not yet supplied.
+
 _More entries are added as failures are encountered. An entry is only added here
 once it has actually been hit — this file is a log, not a list of things that
 might go wrong._

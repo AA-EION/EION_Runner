@@ -33,6 +33,45 @@ public partial class MainWindow : Window
 
         BuildPages();
         NavigationList.SelectedIndex = 0;
+
+        _services.ConfigSaved += RefreshSetupBanner;
+        RefreshSetupBanner();
+    }
+
+    /// <summary>
+    /// Shows what is still unconfigured, and offers a one-click route to the
+    /// page that fixes each item.
+    /// </summary>
+    /// <remarks>
+    /// Re-run on every navigation, because the fix for a gap is on one of these
+    /// pages and the banner must retire itself the moment the last one is
+    /// filled in — an instruction that stays on screen after it has been
+    /// followed reads as a bug.
+    /// </remarks>
+    public void RefreshSetupBanner()
+    {
+        IReadOnlyList<ConfigStore.SetupGap> gaps = ConfigStore.DescribeSetupGaps(_services.Config);
+
+        SetupGapList.ItemsSource = gaps;
+        SetupBanner.Visibility = gaps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        SetupBannerHeading.Text = gaps.Count == 1
+            ? "Setup: one more thing to fill in before runners can start."
+            : $"Setup: {gaps.Count} things to fill in before runners can start.";
+    }
+
+    private void OnSetupGapClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string page }) return;
+
+        foreach (object? entry in NavigationList.Items)
+        {
+            if (entry is ListBoxItem item && (item.Content?.ToString() ?? "") == page)
+            {
+                NavigationList.SelectedItem = item;
+                return;
+            }
+        }
     }
 
     private void BuildPages()
@@ -53,7 +92,7 @@ public partial class MainWindow : Window
 
         _pages["Credentials"] = new CredentialsPage
         {
-            DataContext = new CredentialsViewModel(_services.SecretStore, _services.GitHubAppService, config),
+            DataContext = new CredentialsViewModel(_services.SecretStore, _services.GitHubAppService, config, save),
         };
 
         _pages["Targets"] = new TargetsPage
@@ -89,6 +128,7 @@ public partial class MainWindow : Window
         if (!_pages.TryGetValue(name, out UserControl? page)) return;
 
         PageHost.Content = page;
+        RefreshSetupBanner();
 
         // Pages that reflect live state refresh on entry rather than polling.
         switch (name)

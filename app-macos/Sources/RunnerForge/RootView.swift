@@ -316,6 +316,7 @@ public struct RootView: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             VStack(spacing: 0) {
+                setupBanner
                 detail
                 Divider()
                 statusStrip
@@ -323,6 +324,51 @@ public struct RootView: View {
         }
         .frame(minWidth: 940, minHeight: 640)
         .task { await store.bootstrap() }
+    }
+
+    /// What is still unconfigured, with a one-click route to the page that fixes
+    /// each item.
+    ///
+    /// An app that is merely UNCONFIGURED has to open and say what is missing.
+    /// Refusing to load a default config made the product unusable, because the
+    /// only way to fill these fields in is the window that would not open. The
+    /// banner retires itself the moment the last gap closes — an instruction
+    /// that stays on screen after it has been followed reads as a bug.
+    @ViewBuilder
+    private var setupBanner: some View {
+        let gaps = ConfigStore.describeSetupGaps(store.config)
+
+        if !gaps.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(gaps.count == 1
+                     ? "Setup: one more thing to fill in before runners can start."
+                     : "Setup: \(gaps.count) things to fill in before runners can start.")
+                    .font(.callout.bold())
+
+                ForEach(gaps) { gap in
+                    HStack(spacing: 10) {
+                        Button(gap.page) { page = Self.pageNamed(gap.page) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                        Text(gap.what).font(.callout.weight(.semibold))
+                        Text(gap.howToFix).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer()
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.yellow.opacity(0.14))
+
+            Divider()
+        }
+    }
+
+    private static func pageNamed(_ title: String) -> ForgePage {
+        ForgePage.allCases.first { $0.title == title } ?? .preflight
     }
 
     @ViewBuilder

@@ -4,15 +4,47 @@
         Title="Runner Forge" Height="760" Width="1120"
         WindowStartupLocation="CenterScreen">
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="190"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
+        <!-- The setup banner. An app that is merely UNCONFIGURED must open and
+             say what is missing; refusing to start is what made the product
+             unusable, because the only way to fill these fields in is the
+             window that would not open. Each row navigates to the page that
+             fixes it. The whole banner disappears once nothing is missing. -->
+        <Border x:Name="SetupBanner" Grid.Row="0" Grid.ColumnSpan="2"
+                Background="#FFF4CE" BorderBrush="#E6C200" BorderThickness="0,0,0,1"
+                Padding="14,10" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="SetupBannerHeading" FontWeight="Bold" Foreground="#5C4400"/>
+                <ItemsControl x:Name="SetupGapList" Margin="0,6,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                                <Button Content="{Binding Page}" Tag="{Binding Page}"
+                                        Click="OnSetupGapClick" Padding="10,2" MinWidth="86"/>
+                                <TextBlock Text="{Binding What}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Margin="10,0,0,0" Width="180"/>
+                                <TextBlock Text="{Binding HowToFix}" VerticalAlignment="Center"
+                                           Foreground="#5C4400" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding HowToFix}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
         <!-- The eight pages, in the order the setup journey runs. The macOS app
              presents the same eight in the same order, so knowing one app means
              knowing the other. -->
-        <DockPanel Grid.Column="0" Background="#F1F3F4">
+        <DockPanel Grid.Row="1" Grid.Column="0" Background="#F1F3F4">
             <StackPanel DockPanel.Dock="Top" Margin="14,16,14,10">
                 <TextBlock Text="Runner Forge" FontSize="17" FontWeight="Bold"/>
                 <TextBlock x:Name="VersionText" Foreground="#666" FontSize="11"/>
@@ -31,6 +63,6 @@
             </ListBox>
         </DockPanel>
 
-        <ContentControl x:Name="PageHost" Grid.Column="1"/>
+        <ContentControl x:Name="PageHost" Grid.Row="1" Grid.Column="1"/>
     </Grid>
 </Window>

@@ -127,6 +127,70 @@ public sealed class ConfigStore(LogBus logBus)
     /// than a schema library so the app carries no third-party dependency for
     /// something this small, and so the messages can say what to do about it.
     /// </remarks>
+    /// <summary>
+    /// One thing the user still has to enter before runners can start, and the
+    /// page that lets them enter it.
+    /// </summary>
+    /// <param name="Page">The navigation entry that fixes it, by name.</param>
+    /// <param name="What">The setting, in the words the GUI uses for it.</param>
+    /// <param name="HowToFix">Where the value comes from, for someone who does not already know.</param>
+    public sealed record SetupGap(string Page, string What, string HowToFix);
+
+    /// <summary>
+    /// What is still unconfigured. This is NOT validation and it NEVER blocks
+    /// loading or starting the app.
+    /// </summary>
+    /// <remarks>
+    /// This distinction is the whole point. A freshly created forge.json has an
+    /// empty owner, appId, installationId and repos, because those are exactly
+    /// the things the GUI collects. Treating them as validation errors meant the
+    /// app wrote a default config on first run and then REFUSED TO LOAD THE FILE
+    /// IT HAD JUST WRITTEN on the second — a bootstrap paradox that left no way
+    /// in, since the only way to fill the fields is the window that would not
+    /// open. Structural problems (a malformed file, a bad runner class, a secret
+    /// stored in plaintext) still block, because those cannot be fixed by typing
+    /// in a text box.
+    /// </remarks>
+    public static IReadOnlyList<SetupGap> DescribeSetupGaps(ForgeConfig config)
+    {
+        var gaps = new List<SetupGap>();
+
+        if (string.IsNullOrWhiteSpace(config.GitHub.Owner))
+        {
+            gaps.Add(new SetupGap("Targets", "GitHub owner",
+                "The user or organisation that owns the repositories — the first part of "
+                + "github.com/OWNER/repo."));
+        }
+
+        if (config.GitHub.Repos.Count == 0)
+        {
+            gaps.Add(new SetupGap("Targets", "At least one repository",
+                "The repositories these runners will accept jobs from."));
+        }
+
+        if (string.IsNullOrWhiteSpace(config.GitHub.AppId))
+        {
+            gaps.Add(new SetupGap("Credentials", "GitHub App ID",
+                "On github.com, Settings → Developer settings → GitHub Apps → your App. "
+                + "The App ID is shown at the top. It is not a secret."));
+        }
+
+        if (string.IsNullOrWhiteSpace(config.GitHub.InstallationId))
+        {
+            gaps.Add(new SetupGap("Credentials", "Installation ID",
+                "Install the App on your account, then read the number at the end of the "
+                + "browser address: .../settings/installations/INSTALLATION_ID. Not a secret."));
+        }
+
+        if (config.Runners.Count == 0)
+        {
+            gaps.Add(new SetupGap("Runners", "At least one runner class",
+                "Choose which kinds of job this machine should accept."));
+        }
+
+        return gaps;
+    }
+
     public static IReadOnlyList<string> Validate(JsonNode root)
     {
         var problems = new List<string>();
@@ -153,25 +217,18 @@ public sealed class ConfigStore(LogBus logBus)
             }
         }
 
-        if (obj["github"] is not JsonObject github)
+        // NOTE: the emptiness of github/owner, appId, installationId and repos is
+        // deliberately NOT checked here. Those four are what the GUI exists to
+        // collect, and an unconfigured app is not a corrupt file. See
+        // DescribeSetupGaps below.
+        if (obj["github"] is not JsonObject)
         {
             problems.Add("/github : missing");
         }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(github["owner"]?.GetValue<string>()))
-                problems.Add("/github/owner : must not be empty");
-            if (string.IsNullOrWhiteSpace(github["appId"]?.GetValue<string>()))
-                problems.Add("/github/appId : must not be empty");
-            if (string.IsNullOrWhiteSpace(github["installationId"]?.GetValue<string>()))
-                problems.Add("/github/installationId : must not be empty");
-            if (github["repos"] is not JsonArray repos || repos.Count == 0)
-                problems.Add("/github/repos : at least one repository is required");
-        }
 
-        if (obj["runners"] is not JsonArray runners || runners.Count == 0)
+        if (obj["runners"] is not JsonArray runners)
         {
-            problems.Add("/runners : at least one runner class is required");
+            problems.Add("/runners : missing");
         }
         else
         {

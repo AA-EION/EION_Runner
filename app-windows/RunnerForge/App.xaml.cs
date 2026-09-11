@@ -102,7 +102,19 @@ public sealed class AppServices
 
     public ForgeConfig Config { get; set; }
 
-    public void SaveConfig() => ConfigStore.Save(Config);
+    /// <summary>
+    /// Raised after every save. The setup banner listens, so filling in the last
+    /// missing field retires it immediately rather than on the next navigation —
+    /// an instruction that stays on screen after it has been followed reads as a
+    /// bug.
+    /// </summary>
+    public event Action? ConfigSaved;
+
+    public void SaveConfig()
+    {
+        ConfigStore.Save(Config);
+        ConfigSaved?.Invoke();
+    }
 }
 
 public partial class App : Application

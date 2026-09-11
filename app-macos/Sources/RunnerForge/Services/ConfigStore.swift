@@ -77,6 +77,71 @@ public struct ConfigStore: Sendable {
     /// Hand-written rather than a schema library so the app carries no
     /// third-party dependency for something this small, and so the messages can
     /// say what to do about it.
+    /// One thing the user still has to enter before runners can start, and the
+    /// page that lets them enter it.
+    public struct SetupGap: Sendable, Identifiable, Hashable {
+        public let page: String
+        public let what: String
+        public let howToFix: String
+
+        public var id: String { page + "/" + what }
+
+        public init(page: String, what: String, howToFix: String) {
+            self.page = page
+            self.what = what
+            self.howToFix = howToFix
+        }
+    }
+
+    /// What is still unconfigured. This is NOT validation and it NEVER blocks
+    /// loading or starting the app.
+    ///
+    /// A freshly created forge.json has an empty owner, appId, installationId
+    /// and repos, because those are exactly the things the GUI collects.
+    /// Treating them as validation errors meant the app wrote a default config
+    /// on first run and then refused to load the file it had just written on the
+    /// second — a bootstrap paradox with no way out, since the only way to fill
+    /// the fields is the window that would not open. Structural problems still
+    /// block, because those cannot be fixed by typing in a text field.
+    public static func describeSetupGaps(_ config: ForgeConfig) -> [SetupGap] {
+        var gaps: [SetupGap] = []
+
+        if config.github.owner.trimmingCharacters(in: .whitespaces).isEmpty {
+            gaps.append(SetupGap(
+                page: "Targets", what: "GitHub owner",
+                howToFix: "The user or organisation that owns the repositories — the first part "
+                    + "of github.com/OWNER/repo."))
+        }
+
+        if config.github.repos.isEmpty {
+            gaps.append(SetupGap(
+                page: "Targets", what: "At least one repository",
+                howToFix: "The repositories these runners will accept jobs from."))
+        }
+
+        if config.github.appId.trimmingCharacters(in: .whitespaces).isEmpty {
+            gaps.append(SetupGap(
+                page: "Credentials", what: "GitHub App ID",
+                howToFix: "On github.com, Settings → Developer settings → GitHub Apps → your App. "
+                    + "The App id is shown at the top. It is not a secret."))
+        }
+
+        if config.github.installationId.trimmingCharacters(in: .whitespaces).isEmpty {
+            gaps.append(SetupGap(
+                page: "Credentials", what: "Installation ID",
+                howToFix: "Install the App on your account, then read the number at the end of the "
+                    + "browser address: .../settings/installations/INSTALLATION_ID. Not a secret."))
+        }
+
+        if config.runners.isEmpty {
+            gaps.append(SetupGap(
+                page: "Runners", what: "At least one runner class",
+                howToFix: "Choose which kinds of job this machine should accept."))
+        }
+
+        return gaps
+    }
+
     public static func validate(_ root: [String: Any]) -> [String] {
         var problems: [String] = []
 
@@ -94,16 +159,11 @@ public struct ConfigStore: Sendable {
             }
         }
 
-        if let github = root["github"] as? [String: Any] {
-            if (github["owner"] as? String).isNilOrEmpty { problems.append("/github/owner : must not be empty") }
-            if (github["appId"] as? String).isNilOrEmpty { problems.append("/github/appId : must not be empty") }
-            if (github["installationId"] as? String).isNilOrEmpty {
-                problems.append("/github/installationId : must not be empty")
-            }
-            if ((github["repos"] as? [Any]) ?? []).isEmpty {
-                problems.append("/github/repos : at least one repository is required")
-            }
-        } else {
+        // NOTE: the emptiness of github/owner, appId, installationId and repos is
+        // deliberately NOT checked here. Those four are what the GUI exists to
+        // collect, and an unconfigured app is not a corrupt file. See
+        // describeSetupGaps(_:) below.
+        if root["github"] as? [String: Any] == nil {
             problems.append("/github : missing")
         }
 

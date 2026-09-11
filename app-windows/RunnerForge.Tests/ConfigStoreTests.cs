@@ -178,13 +178,83 @@ public sealed class ConfigStoreTests
         Assert.Contains(ConfigStore.Validate(node), p => p.Contains("/telemetry", StringComparison.Ordinal));
     }
 
+    // -----------------------------------------------------------------------
+    // Unconfigured is not invalid.
+    //
+    // These four fields are what the GUI exists to collect. Treating them as
+    // validation errors meant the app wrote a default forge.json on first run
+    // and then refused to load the file it had just written on the second,
+    // leaving no way in at all: the only way to fill them is the window that
+    // would not open. See TROUBLESHOOTING #22.
+    // -----------------------------------------------------------------------
+
     [Fact]
-    public void An_empty_repository_list_is_rejected()
+    public void A_freshly_created_default_config_loads_without_error()
+    {
+        ForgeConfig fresh = ForgeConfig.CreateDefault(@"C:\ProgramData\RunnerForge\work");
+        string json = JsonSerializer.Serialize(fresh, ForgeConfig.SerializerOptions);
+
+        Assert.Empty(ConfigStore.Validate(Parse(json)));
+
+        // And the round trip the app actually performs: write defaults, read
+        // them back. This is the exact sequence that was broken.
+        ForgeConfig reloaded = new ConfigStore(new LogBus()).Parse(json);
+        Assert.NotNull(reloaded);
+    }
+
+    [Fact]
+    public void An_empty_repository_list_is_a_setup_gap_not_a_validation_error()
     {
         JsonNode node = ValidNode();
         node["github"]!["repos"] = new JsonArray();
 
-        Assert.Contains(ConfigStore.Validate(node), p => p.Contains("/github/repos", StringComparison.Ordinal));
+        Assert.DoesNotContain(ConfigStore.Validate(node), p => p.Contains("/github/repos", StringComparison.Ordinal));
+
+        ForgeConfig config = ValidConfig();
+        config.GitHub.Repos = [];
+        Assert.Contains(ConfigStore.DescribeSetupGaps(config), g => g.What.Contains("repository", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Every_unconfigured_github_field_is_reported_as_a_gap_with_a_page_that_fixes_it()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault(@"C:\ProgramData\RunnerForge\work");
+
+        IReadOnlyList<ConfigStore.SetupGap> gaps = ConfigStore.DescribeSetupGaps(config);
+
+        Assert.Contains(gaps, g => g.What.Contains("owner", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(gaps, g => g.What.Contains("App ID", StringComparison.Ordinal));
+        Assert.Contains(gaps, g => g.What.Contains("Installation ID", StringComparison.Ordinal));
+        Assert.Contains(gaps, g => g.What.Contains("repository", StringComparison.OrdinalIgnoreCase));
+
+        // A gap the user cannot act on is worse than no gap: every one must name
+        // a real navigation page and say where the value comes from.
+        string[] pages = ["Preflight", "Credentials", "Targets", "Runners", "Signing", "Export", "Logs", "Cleanup"];
+        Assert.All(gaps, g =>
+        {
+            Assert.Contains(g.Page, pages);
+            Assert.False(string.IsNullOrWhiteSpace(g.HowToFix));
+        });
+    }
+
+    [Fact]
+    public void A_fully_configured_config_reports_no_gaps()
+    {
+        Assert.Empty(ConfigStore.DescribeSetupGaps(ValidConfig()));
+    }
+
+    [Fact]
+    public void A_structurally_broken_file_is_still_rejected()
+    {
+        // The distinction has to hold in both directions: things a text box
+        // cannot fix must still block.
+        JsonNode node = ValidNode();
+        node["schemaVersion"] = 99;
+        Assert.NotEmpty(ConfigStore.Validate(node));
+
+        node = ValidNode();
+        node["github"] = null;
+        Assert.Contains(ConfigStore.Validate(node), p => p.StartsWith("/github", StringComparison.Ordinal));
     }
 
     [Fact]

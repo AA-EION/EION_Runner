@@ -38,15 +38,18 @@ public sealed class CredentialsViewModel : ObservableObject
     private readonly SecretStore _secretStore;
     private readonly GitHubAppService _appService;
     private readonly Func<ForgeConfig> _configAccessor;
+    private readonly Action _saveConfig;
 
     private string _testResult = "";
 
     public CredentialsViewModel(
-        SecretStore secretStore, GitHubAppService appService, Func<ForgeConfig> configAccessor)
+        SecretStore secretStore, GitHubAppService appService, Func<ForgeConfig> configAccessor,
+        Action saveConfig)
     {
         _secretStore = secretStore;
         _appService = appService;
         _configAccessor = configAccessor;
+        _saveConfig = saveConfig;
 
         Fields =
         [
@@ -66,6 +69,44 @@ public sealed class CredentialsViewModel : ObservableObject
 
         TestGitHubCommand = new AsyncRelayCommand(_ => TestGitHubAsync());
         Refresh();
+    }
+
+    // -----------------------------------------------------------------------
+    // The GitHub App identity.
+    //
+    // NEITHER OF THESE IS A SECRET. Both are shown openly in the GitHub UI and
+    // both live in forge.json; it is the App's private key, above, that is
+    // sensitive. They sit on this page because they identify the App whose key
+    // that is — and because the macOS app puts them in exactly this place, and
+    // the two apps are meant to teach the same layout.
+    //
+    // They previously had no editor anywhere in the Windows app while the
+    // config demanded them, so the product could not be configured through its
+    // own GUI at all.
+    // -----------------------------------------------------------------------
+
+    public string AppId
+    {
+        get => _configAccessor().GitHub.AppId;
+        set
+        {
+            if (_configAccessor().GitHub.AppId == value) return;
+            _configAccessor().GitHub.AppId = value.Trim();
+            _saveConfig();
+            OnPropertyChanged();
+        }
+    }
+
+    public string InstallationId
+    {
+        get => _configAccessor().GitHub.InstallationId;
+        set
+        {
+            if (_configAccessor().GitHub.InstallationId == value) return;
+            _configAccessor().GitHub.InstallationId = value.Trim();
+            _saveConfig();
+            OnPropertyChanged();
+        }
     }
 
     public ObservableCollection<CredentialField> Fields { get; }

@@ -194,8 +194,33 @@ public sealed class RunnersViewModel : ObservableObject
     {
         if (card is null || !card.IsAvailable) return;
         PersistToConfig();
+
+        // Refuse early, and say what is missing. Without this the start goes
+        // ahead, fails minting a JIT config, and reports a GitHub API error that
+        // never mentions the empty App ID that actually caused it.
+        IReadOnlyList<ConfigStore.SetupGap> gaps = ConfigStore.DescribeSetupGaps(_configAccessor());
+        if (gaps.Count > 0)
+        {
+            SetupWarning =
+                "Cannot start: " + string.Join(", ", gaps.Select(g => g.What))
+                + $". Fill these in on the {string.Join(" and ", gaps.Select(g => g.Page).Distinct())} page.";
+            return;
+        }
+
+        SetupWarning = "";
         await _supervisor.StartClassAsync(_configAccessor(), card.Class).ConfigureAwait(true);
     }
+
+    private string _setupWarning = "";
+
+    /// <summary>Why a start was refused, in the words of the fields that are missing.</summary>
+    public string SetupWarning
+    {
+        get => _setupWarning;
+        private set { SetProperty(ref _setupWarning, value); OnPropertyChanged(nameof(HasSetupWarning)); }
+    }
+
+    public bool HasSetupWarning => _setupWarning.Length > 0;
 
     private async Task StopAsync(RunnerCard? card)
     {

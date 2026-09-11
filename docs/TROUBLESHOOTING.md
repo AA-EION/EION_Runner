@@ -439,5 +439,51 @@ alone does not help if the sub-expressions stay equally inferred.
 Note that `swiftc -parse` cannot catch this — it is a type-checking failure, not a
 syntax one — so on a Linux development machine it only ever appears in CI.
 
+---
+
+## 19. The Windows app launches and no window appears
+
+**Symptom** — `RunnerForge.exe` runs. Task Manager shows the process. Nothing is on
+screen, there is no error, and nothing is written to the event log. Installing from the
+MSI behaves identically.
+
+**Cause** — nothing in the process ever constructed the window. `App.xaml` had no
+`StartupUri`, and `App.OnStartup` built the service container, logged
+`Runner Forge started` and returned. WPF then had an application with zero windows and
+`ShutdownMode="OnMainWindowClose"`, so it neither showed anything nor exited.
+
+The reason this survived so long is worth more than the fix: **every check in CI asked
+whether the artifact was correct, and none asked whether the program did anything.**
+The build was clean, the tests passed, the publish really was a single 62 MB
+self-contained file, and the MSI's `File` table really did carry all 24 program files.
+All of that was true of an executable that opened nothing.
+
+**Fix** — create and show the window explicitly at the end of `OnStartup`:
+
+```csharp
+Services = new AppServices();
+base.OnStartup(e);
+
+var window = new MainWindow();
+MainWindow = window;
+window.Show();
+```
+
+Explicitly, and **not** via `StartupUri`, because `MainWindow`'s constructor reads
+`((App)Application.Current).Services` and that must be assigned first. One ordered code
+path beats two that can disagree.
+
+Two things were added alongside it so the next startup failure is not silent either: a
+`DispatcherUnhandledException` handler that reports and keeps the app alive, and a
+`try/catch` around window creation that shows the error instead of leaving a running
+process with nothing on screen.
+
+**Prevention** — `ci-windows-app.yml` now launches the published executable and waits
+for a real top-level window, failing if the process exits or stays alive for 60 seconds
+with no window handle. `ci-macos-app.yml` runs the binary directly — not `open`, which
+returns immediately and would report success for a crash — and asserts it is still alive
+ten seconds later. SwiftUI's `WindowGroup` makes the exact WPF failure structurally
+impossible on macOS, but a crash during launch is not.
+
 _More entries are added as failures are encountered. An entry is only added here once it
 has actually been hit — this file is a log, not a list of things that might go wrong._

@@ -18,7 +18,6 @@ public sealed class BoolToVisibilityConverter : IValueConverter
         value is Visibility.Visible;
 }
 
-/// <summary>Renders a requirement's satisfied flag as a tick or a cross.</summary>
 /// <summary>
 /// Inverts a bool. Used where a control is enabled EXCEPT while something is
 /// running — binding IsEnabled directly to an IsBusy flag gets that backwards.
@@ -32,6 +31,7 @@ public sealed class InverseBoolConverter : IValueConverter
         value is not bool flag || !flag;
 }
 
+/// <summary>Renders a requirement's satisfied flag as a tick or a cross.</summary>
 public sealed class BoolToTickConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
@@ -132,7 +132,57 @@ public partial class App : Application
         Services = new AppServices();
         Services.LogBus.Info("app", "Runner Forge started");
 
+        // Report a crash instead of vanishing. An unhandled exception on the UI
+        // thread otherwise kills the process with no window and no message, which
+        // is indistinguishable from "the app does nothing".
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+
         base.OnStartup(e);
+
+        // ---------------------------------------------------------------
+        // Show the window.
+        //
+        // This is done HERE and not with StartupUri in App.xaml, because
+        // MainWindow's constructor reads ((App)Application.Current).Services and
+        // that has to be assigned first. One code path, in the right order,
+        // rather than two that can disagree.
+        //
+        // Its absence was a real defect: the app launched, built its services,
+        // logged "Runner Forge started" and then sat there with no window,
+        // because nothing in the process ever constructed MainWindow. It built,
+        // published and packaged perfectly the whole time.
+        // ---------------------------------------------------------------
+        try
+        {
+            var window = new MainWindow();
+            MainWindow = window;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            Services.LogBus.Error("app", $"the main window could not be created: {ex}");
+            MessageBox.Show(
+                "Runner Forge could not open its main window.\n\n"
+                + ex.Message
+                + "\n\nConfiguration lives at:\n"
+                + ConfigStore.DefaultConfigPath,
+                "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    private void OnDispatcherUnhandledException(
+        object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        Services?.LogBus.Error("app", $"unhandled: {e.Exception}");
+
+        MessageBox.Show(
+            $"Runner Forge hit an unexpected error.\n\n{e.Exception.Message}\n\n"
+            + "The app will stay open. The full error is on the Logs page.",
+            "Runner Forge", MessageBoxButton.OK, MessageBoxImage.Error);
+
+        // Handled, so one bad page does not take the whole app down with it.
+        e.Handled = true;
     }
 
     /// <summary>

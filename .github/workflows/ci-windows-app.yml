@@ -106,6 +106,65 @@ jobs:
           Get-ChildItem publish -Recurse -File | Measure-Object -Property Length -Sum |
             ForEach-Object { Write-Host "publish payload: $($_.Count) file(s), $($_.Sum) bytes" }
 
+      # ---------------------------------------------------------------------
+      # Launch it.
+      #
+      # Every check before this one asks whether the ARTIFACT is right — one
+      # file, correct size, MSI carries the payload. None of them asks whether
+      # the program DOES anything, and that gap shipped a 60 MB executable that
+      # started, built its services and then sat there with no window, because
+      # nothing in the process ever constructed MainWindow. It built, published
+      # and packaged perfectly the entire time.
+      #
+      # So: start the published exe and wait for a real top-level window.
+      # ---------------------------------------------------------------------
+      - name: Smoke test — the app opens a window
+        shell: pwsh
+        working-directory: app-windows
+        timeout-minutes: 3
+        run: |
+          $exe = (Resolve-Path 'publish\RunnerForge.exe').Path
+          Write-Host "launching $exe"
+
+          $process = Start-Process -FilePath $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          $handle = [IntPtr]::Zero
+          $title = ''
+
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            $process.Refresh()
+
+            if ($process.HasExited) {
+              throw ("RunnerForge.exe exited after $([int]((Get-Date) - $process.StartTime).TotalSeconds)s " +
+                     "with code $($process.ExitCode) instead of opening a window.")
+            }
+
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+              $handle = $process.MainWindowHandle
+              $title = $process.MainWindowTitle
+              break
+            }
+          }
+
+          if ($handle -eq [IntPtr]::Zero) {
+            # Kill it before failing, or the runner waits on the drain in OnExit.
+            $process | Stop-Process -Force -ErrorAction SilentlyContinue
+            throw ('RunnerForge.exe stayed alive for 60s but never opened a window. ' +
+                   'That is the signature of a GUI app whose startup path never ' +
+                   'constructs or shows its main window.')
+          }
+
+          Write-Host "window handle: $handle"
+          Write-Host "window title:  $title"
+          if (-not $title) { throw 'The window has no title, which means it is not MainWindow.' }
+
+          # Stop-Process rather than CloseMainWindow: a graceful close runs the
+          # drain/reap/sweep in OnExit, which is correct behaviour and much
+          # slower than this check needs.
+          $process | Stop-Process -Force
+          Write-Host 'smoke test passed: the app opens a titled window'
+
       - name: Install WiX
         run: dotnet tool install --global wix --version 5.0.2
 

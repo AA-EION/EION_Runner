@@ -121,6 +121,60 @@ jobs:
           bytes="$(du -sk "$mountpoint/RunnerForge.app" | cut -f1)"
           echo "app inside the DMG: ${bytes} KB"
 
+      # ---------------------------------------------------------------------
+      # Launch it.
+      #
+      # The Windows app shipped once with a startup path that never constructed
+      # its window — it built, published and packaged perfectly and opened
+      # nothing. SwiftUI's WindowGroup makes that exact failure structurally
+      # impossible here, since there is no imperative "show the window" step to
+      # forget. What IS possible is a crash during launch, so this checks the
+      # realistic failure: that the app starts and stays up.
+      # ---------------------------------------------------------------------
+      - name: Smoke test — the app launches and stays up
+        working-directory: app-macos
+        timeout-minutes: 3
+        run: |
+          set -uo pipefail
+          app="dist/RunnerForge.app"
+          binary="$app/Contents/MacOS/RunnerForge"
+
+          # Run the binary directly rather than `open`: `open` returns
+          # immediately and reports nothing about what happened next, so a
+          # crash-on-launch would look like success.
+          "$binary" > /tmp/runnerforge-stdout.log 2>/tmp/runnerforge-stderr.log &
+          pid=$!
+          echo "launched pid $pid"
+
+          survived=1
+          for _ in $(seq 1 10); do
+            sleep 1
+            if ! kill -0 "$pid" 2>/dev/null; then survived=0; break; fi
+          done
+
+          if [ "$survived" -eq 0 ]; then
+            wait "$pid"; status=$?
+            echo "--- stdout ---"; cat /tmp/runnerforge-stdout.log
+            echo "--- stderr ---"; cat /tmp/runnerforge-stderr.log
+            echo "RunnerForge exited during launch with status $status."
+            exit 1
+          fi
+
+          echo "still running after 10s"
+
+          # The app holds a caffeinate assertion for its lifetime, so killing it
+          # deliberately here also proves that child is reaped with it.
+          kill "$pid" 2>/dev/null || true
+          sleep 2
+          kill -9 "$pid" 2>/dev/null || true
+
+          if pgrep -f "caffeinate -dimsu" >/dev/null 2>&1; then
+            echo "WARNING: a caffeinate process outlived the app. The Reaper handles"
+            echo "         this on the next launch, but it should not happen."
+          fi
+
+          echo "smoke test passed: the app launches and stays up"
+
       # The .app is tarred and the DMG is not, for the reason in the header.
       - name: Tar the app bundle
         working-directory: app-macos

@@ -290,7 +290,22 @@ not evidence; its contents are.
 | WiX | 5.0.2 |
 | `RunnerForge.msi` | **56,680,448 bytes** |
 | MSI `File` table | **24 rows** |
-| Current head | [34569170694](https://github.com/AA-EION/EION_Runner/actions/runs/34569170694), commit `621c768`, green — including the 6 new signing tests |
+| Current head | [34571310000](https://github.com/AA-EION/EION_Runner/actions/runs/34571310000), commit `e83159b`, green — 79 tests, exe 62,996,936 B, MSI 56,678,091 B |
+| **The app opens a window** | `window handle: 393296`, `window title: Runner Forge`, and **no error line in the startup log** — run 34571310000, step 10 |
+
+The last row is the one that matters most, and it is new. Every run before
+[34570056314](https://github.com/AA-EION/EION_Runner/actions/runs/34570056314)
+was green for an executable **that opened nothing at all** — a build that
+compiles, tests that pass, a genuine single file and an MSI with a full `File`
+table are all compatible with a program that does not work. The smoke test was
+added in that run and immediately failed, then failed twice more on a crash the
+first failure had been hiding (34570402196, 34570795128), before going green
+here. Three red runs that should have been red is the check doing its job. See
+TROUBLESHOOTING #19 and #20.
+
+It now launches the built app, waits for a real titled top-level window, and
+then **reads the app's own log and fails on any error line** — because an open
+window is not proof either.
 
 The `File` table, read out of the MSI itself rather than assumed:
 
@@ -490,7 +505,7 @@ delivered once they are installable:
 
 | | Item | Status |
 | --- | --- | --- |
-| ✅ | **Stage G: the Windows app builds, its tests RUN, and the MSI carries the program files.** | Run 34550945700. 73 tests passed on Windows — the only place they can run. MSI `File` table read back: 24 rows, `RunnerForge.exe` at 62,984,861 bytes. |
+| ✅ | **Stage G: the Windows app builds, its tests RUN, the MSI carries the program files, and the app OPENS A WINDOW.** | Run 34571310000, commit `e83159b`. 79 tests passed on Windows — the only place they can run. MSI `File` table read back: 24 rows, `RunnerForge.exe` at 62,996,936 bytes. The built app launches, shows a titled window (`Runner Forge`, handle 393296) and logs no errors on startup. |
 | ✅ | **Stage H: the macOS app builds, its tests run, and the DMG mounts with a runnable app.** | Run 34551196570. 38 tests in 4 suites passed. `hdiutil verify` VALID; the mounted DMG carries a runnable `RunnerForge.app` and an `/Applications` drop target; App Sandbox asserted `false` **as signed**. |
 
 ### Deviations from §5, and why

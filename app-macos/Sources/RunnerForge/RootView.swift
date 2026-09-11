@@ -168,6 +168,17 @@ public final class AppServices {
 
         let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts").path
         self.scriptsDirectory = bundled ?? "/usr/local/share/runnerforge/scripts"
+
+        // Breadcrumbs, in order, because the useful question after a startup
+        // crash is "how far did it get" and the answer has to survive the crash.
+        let version = ProcessInfo.processInfo.operatingSystemVersionString
+        let logPath = LogBus.defaultLogPath
+        let scripts = self.scriptsDirectory
+        Task { [logBus] in
+            await logBus.info("app", "Runner Forge started — \(version), user \(NSUserName())")
+            await logBus.info("app", "log file: \(logPath)")
+            await logBus.info("app", "scripts:  \(scripts)")
+        }
     }
 
     /// Teaches the LogBus every secret the Keychain holds, so redaction works on

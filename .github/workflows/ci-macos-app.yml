@@ -173,7 +173,33 @@ jobs:
             echo "         this on the next launch, but it should not happen."
           fi
 
-          echo "smoke test passed: the app launches and stays up"
+          # ---------------------------------------------------------------
+          # A live process is NOT proof the app works, any more than an open
+          # window is on Windows — where InvariantGlobalization made every
+          # binding throw while the process sat there perfectly alive. So the
+          # log gets read: a clean startup logs no errors at all, and any
+          # error before the user has touched anything is a defect.
+          # ---------------------------------------------------------------
+          log="$HOME/Library/Logs/RunnerForge/runnerforge.log"
+          if [ ! -f "$log" ]; then
+            echo "--- stdout ---"; cat /tmp/runnerforge-stdout.log
+            echo "--- stderr ---"; cat /tmp/runnerforge-stderr.log
+            echo "The app ran for 10s and wrote no log at $log."
+            exit 1
+          fi
+
+          echo "--- $log ---"
+          cat "$log"
+
+          if grep -q '\[Error\]' "$log"; then
+            count=$(grep -c '\[Error\]' "$log")
+            echo ''
+            echo "The app logged $count error(s) while merely starting up."
+            echo 'A running process is not the same as a working app.'
+            exit 1
+          fi
+
+          echo "smoke test passed: the app launches, stays up and logs no errors"
 
       # The .app is tarred and the DMG is not, for the reason in the header.
       - name: Tar the app bundle

@@ -29,9 +29,22 @@ public struct LogEntry: Sendable, Identifiable, Hashable {
         return "\(time) [\(level.label)] \(source) \(message)"
     }
 
+    /// The file sink's form. A support log read days later needs the date; the
+    /// UI's time-only column does not.
+    public var formattedWithDate: String {
+        let stamp = LogEntry.fileFormatter.string(from: timestamp)
+        return "\(stamp) [\(level.label)] \(source) \(message)"
+    }
+
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private static let fileFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS ZZZZZ"
         return formatter
     }()
 }
@@ -51,6 +64,32 @@ public actor LogBus {
     private var secretValues: [String] = []
     private var observers: [UUID: @Sendable (LogEntry) -> Void] = [:]
     private let maxEntries = 20_000
+
+    // -----------------------------------------------------------------------
+    // The file sink.
+    //
+    // Without it, a crash before the window appears leaves the user with no
+    // window AND no record of why — which is exactly the position the Windows
+    // app was in, and it took a CI run with a log dump to get out of it. The
+    // lines written here are the same ones the UI gets, so they are ALREADY
+    // REDACTED: redaction happens inside write(), before anything leaves it.
+    // -----------------------------------------------------------------------
+
+    /// `~/Library/Logs/RunnerForge/runnerforge.log` — where Console.app and
+    /// every Mac user already looks for an application log.
+    public static let defaultLogPath: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home
+            .appendingPathComponent("Library/Logs/RunnerForge/runnerforge.log")
+            .path
+    }()
+
+    /// Set once a write fails. Logging must never be the thing that takes the
+    /// app down, and there is nowhere left to report a logging failure to.
+    private var fileUnavailable = false
+    private var fileHandle: FileHandle?
+
+    private let maxLogBytes = 8 * 1024 * 1024
 
     public init() {}
 
@@ -96,6 +135,57 @@ public actor LogBus {
         entries.append(entry)
         if entries.count > maxEntries { entries.removeFirst(entries.count - maxEntries) }
         for observer in observers.values { observer(entry) }
+        appendToFile(entry)
+    }
+
+    private func appendToFile(_ entry: LogEntry) {
+        guard !fileUnavailable else { return }
+
+        do {
+            let handle = try openLogFile()
+            guard let data = (entry.formattedWithDate + "\n").data(using: .utf8) else { return }
+            try handle.write(contentsOf: data)
+        } catch {
+            // One failure is enough: stop trying rather than throwing on every
+            // subsequent line.
+            fileUnavailable = true
+            fileHandle = nil
+        }
+    }
+
+    private func openLogFile() throws -> FileHandle {
+        if let handle = fileHandle {
+            // Rotate once the file is large, keeping exactly one previous file.
+            // Unbounded growth on a machine that hosts runners for days is a
+            // real disk problem, and two files is all anyone reads.
+            let size = try handle.offset()
+            if size < UInt64(maxLogBytes) { return handle }
+
+            try handle.close()
+            fileHandle = nil
+
+            let fileManager = FileManager.default
+            let path = Self.defaultLogPath
+            let previous = path + ".1"
+            try? fileManager.removeItem(atPath: previous)
+            try? fileManager.moveItem(atPath: path, toPath: previous)
+        }
+
+        let fileManager = FileManager.default
+        let path = Self.defaultLogPath
+        let directory = (path as NSString).deletingLastPathComponent
+
+        try fileManager.createDirectory(
+            atPath: directory, withIntermediateDirectories: true)
+
+        if !fileManager.fileExists(atPath: path) {
+            fileManager.createFile(atPath: path, contents: nil)
+        }
+
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        try handle.seekToEnd()
+        fileHandle = handle
+        return handle
     }
 
     public func debug(_ source: String, _ message: String) { write(.debug, source, message) }

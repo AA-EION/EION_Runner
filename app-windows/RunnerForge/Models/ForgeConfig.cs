@@ -98,8 +98,39 @@ public sealed class SigningConfig
     [JsonPropertyName("mode")] public string Mode { get; set; } = "windows-ilok";
 
     [JsonPropertyName("paceAccount")] public string PaceAccount { get; set; } = "";
+
+    /// <summary>
+    /// Wrap Config GUID. The normal way to tell wraptool which publisher is
+    /// signing. Either this OR the customer number/name pair is required.
+    /// </summary>
     [JsonPropertyName("paceWcGuid")] public string PaceWcGuid { get; set; } = "";
+
+    /// <summary>
+    /// PACE-issued customer number, the alternative to a Wrap Config. wraptool
+    /// rejects it without the company name alongside, so the two travel together.
+    /// </summary>
+    [JsonPropertyName("paceCustomerNumber")] public string PaceCustomerNumber { get; set; } = "";
+
+    [JsonPropertyName("paceCustomerName")] public string PaceCustomerName { get; set; } = "";
+
+    /// <summary>
+    /// The PLATFORM signing identity — a 40-character SHA-1 thumbprint on
+    /// Windows, an Apple certificate common name on macOS. Not a secret: it
+    /// names a certificate, it is not the key.
+    /// </summary>
     [JsonPropertyName("paceSignId")] public string PaceSignId { get; set; } = "";
+
+    /// <summary>
+    /// True when <see cref="PaceSignId"/> names a SELF-SIGNED certificate. It
+    /// changes what the signing scripts do and what the UI is allowed to promise.
+    /// </summary>
+    [JsonPropertyName("paceSelfSigned")] public bool PaceSelfSigned { get; set; }
+
+    /// <summary>True when wraptool has everything it needs to name the publisher.</summary>
+    [JsonIgnore]
+    public bool HasPublisherIdentity =>
+        !string.IsNullOrWhiteSpace(PaceWcGuid)
+        || (!string.IsNullOrWhiteSpace(PaceCustomerNumber) && !string.IsNullOrWhiteSpace(PaceCustomerName));
 
     /// <summary>Append --allowsigningservice to wraptool in cloud mode.</summary>
     [JsonPropertyName("allowSigningService")] public bool AllowSigningService { get; set; } = true;

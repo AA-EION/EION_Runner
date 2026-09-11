@@ -104,8 +104,11 @@
           "description": "AAX signing strategy. 'cloud' needs no dongle; the iLok modes run a host-process runner on the machine holding the dongle."
         },
         "paceAccount": { "type": "string", "default": "", "description": "PACE/iLok account name. The password lives in the keystore under 'pacePassword'." },
-        "paceWcGuid": { "type": "string", "default": "", "description": "PACE wrapping certificate GUID passed to wraptool as --wcguid." },
-        "paceSignId": { "type": "string", "default": "", "description": "PACE signing identifier passed to wraptool as --signid." },
+        "paceWcGuid": { "type": "string", "default": "", "description": "Wrap Config GUID passed to wraptool as --wcguid. Either this OR paceCustomerNumber + paceCustomerName identifies the publisher." },
+        "paceCustomerNumber": { "type": "string", "default": "", "description": "PACE-issued customer number, the alternative to a Wrap Config. wraptool rejects it without paceCustomerName." },
+        "paceCustomerName": { "type": "string", "default": "", "description": "Publisher company name. Required whenever paceCustomerNumber is used." },
+        "paceSignId": { "type": "string", "default": "", "description": "PLATFORM signing identity passed to wraptool as --signid: a certificate common name on macOS, a 40-character SHA-1 thumbprint on Windows. Names a certificate; it is not a key, so it is not a secret." },
+        "paceSelfSigned": { "type": "boolean", "default": false, "description": "True when paceSignId names a self-signed certificate. Suppresses notarization hardening, which cannot help a certificate Apple has never seen." },
         "allowSigningService": {
           "type": "boolean",
           "default": true,

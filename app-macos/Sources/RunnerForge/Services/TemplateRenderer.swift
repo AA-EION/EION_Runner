@@ -65,6 +65,32 @@ public struct TemplateRenderer: Sendable {
 
     /// The substitution map for a configuration. The single definition of how
     /// config becomes workflow, shared by the Export page and the self-test.
+
+    /// The wraptool publisher arguments for this configuration, as a ready-made
+    /// fragment. `--wcguid` when a Wrap Config is set, otherwise the customer
+    /// number and company name, which wraptool requires together.
+    public static func paceIdentityArgs(_ config: ForgeConfig, shell: Bool) -> String {
+        let guid = config.signing.paceWcGuid.trimmingCharacters(in: .whitespaces)
+        if !guid.isEmpty {
+            return shell ? "--wcguid '\(guid)'" : "-WcGuid '\(guid)'"
+        }
+
+        let number = config.signing.paceCustomerNumber.trimmingCharacters(in: .whitespaces)
+        let name = config.signing.paceCustomerName.trimmingCharacters(in: .whitespaces)
+        guard !number.isEmpty, !name.isEmpty else {
+            // Deliberately not a silent empty string: an emitted workflow with no
+            // publisher argument fails inside wraptool minutes later, with a
+            // message that does not mention the configuration at all.
+            return shell
+                ? "--wcguid 'SET-A-WRAP-CONFIG-OR-CUSTOMER-NUMBER-ON-THE-SIGNING-PAGE'"
+                : "-WcGuid 'SET-A-WRAP-CONFIG-OR-CUSTOMER-NUMBER-ON-THE-SIGNING-PAGE'"
+        }
+
+        return shell
+            ? "--customernumber '\(number)' \\\n            --customername '\(name)'"
+            : "-CustomerNumber '\(number)' `\n            -CustomerName '\(name)'"
+    }
+
     public static func buildValues(
         config: ForgeConfig,
         projectName: String,
@@ -116,6 +142,17 @@ public struct TemplateRenderer: Sendable {
             "signWorkflowFileName": "workflow-sign.yml",
             "paceWcGuid": config.signing.paceWcGuid,
             "paceSignId": config.signing.paceSignId,
+
+            // These four expand to complete argument fragments rather than bare
+            // values, because the shape of the call changes with the
+            // configuration: a Wrap Config is one flag, a customer number is two,
+            // and a self-signed certificate adds one more. Emitting the fragment
+            // keeps that decision here instead of spreading conditionals through
+            // YAML, where they cannot be unit-tested.
+            "paceIdentityArgsSh": paceIdentityArgs(config, shell: true),
+            "paceIdentityArgsPs": paceIdentityArgs(config, shell: false),
+            "paceSelfSignedSh": config.signing.paceSelfSigned ? " \\\n            --self-signed" : "",
+            "paceSelfSignedPs": config.signing.paceSelfSigned ? " `\n            -SelfSigned" : "",
 
             "windowsSigningEnabled": config.signing.windows.provider == "none" ? "false" : "true",
             "azureEndpoint": config.signing.windows.azureEndpoint,

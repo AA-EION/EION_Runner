@@ -101,13 +101,54 @@ public struct SigningConfig: Codable, Sendable, Equatable {
     /// Default is windows-ilok: the user's Windows PC runs 24/7.
     public var mode: String
     public var paceAccount: String
+
+    /// Wrap Config GUID. The normal way to tell wraptool which publisher is
+    /// signing. Either this OR the customer number/name pair is required.
     public var paceWcGuid: String
+
+    /// PACE-issued customer number, the alternative to a Wrap Config. wraptool
+    /// rejects it without the company name alongside, so the two travel
+    /// together.
+    public var paceCustomerNumber: String
+    public var paceCustomerName: String
+
+    /// The PLATFORM signing identity — an Apple certificate common name on
+    /// macOS, a 40-character SHA-1 thumbprint on Windows. Not a secret: it
+    /// names a certificate, it is not the key.
     public var paceSignId: String
+
+    /// True when paceSignId names a SELF-SIGNED certificate. It changes what
+    /// the signing scripts do (no notarization hardening, which cannot help a
+    /// certificate Apple has never seen) and what the UI promises.
+    public var paceSelfSigned: Bool
 
     /// Append --allowsigningservice to wraptool in cloud mode.
     public var allowSigningService: Bool
     public var windows: WindowsSigningConfig
     public var macos: MacosSigningConfig
+
+    /// Explicit CodingKeys plus a decoder with defaults, so a forge.json
+    /// written before these fields existed still loads instead of throwing.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(String.self, forKey: .mode) ?? SigningMode.windowsIlok.rawValue
+        paceAccount = try container.decodeIfPresent(String.self, forKey: .paceAccount) ?? ""
+        paceWcGuid = try container.decodeIfPresent(String.self, forKey: .paceWcGuid) ?? ""
+        paceCustomerNumber = try container.decodeIfPresent(String.self, forKey: .paceCustomerNumber) ?? ""
+        paceCustomerName = try container.decodeIfPresent(String.self, forKey: .paceCustomerName) ?? ""
+        paceSignId = try container.decodeIfPresent(String.self, forKey: .paceSignId) ?? ""
+        paceSelfSigned = try container.decodeIfPresent(Bool.self, forKey: .paceSelfSigned) ?? false
+        allowSigningService = try container.decodeIfPresent(Bool.self, forKey: .allowSigningService) ?? true
+        windows = try container.decodeIfPresent(WindowsSigningConfig.self, forKey: .windows) ?? WindowsSigningConfig()
+        macos = try container.decodeIfPresent(MacosSigningConfig.self, forKey: .macos) ?? MacosSigningConfig()
+    }
+
+    /// True when wraptool has everything it needs to name the publisher.
+    public var hasPublisherIdentity: Bool {
+        !paceWcGuid.trimmingCharacters(in: .whitespaces).isEmpty
+            || (!paceCustomerNumber.trimmingCharacters(in: .whitespaces).isEmpty
+                && !paceCustomerName.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
 
     public var modeValue: SigningMode {
         get { SigningMode(rawValue: mode) ?? .windowsIlok }
@@ -118,7 +159,10 @@ public struct SigningConfig: Codable, Sendable, Equatable {
         mode: String = SigningMode.windowsIlok.rawValue,
         paceAccount: String = "",
         paceWcGuid: String = "",
+        paceCustomerNumber: String = "",
+        paceCustomerName: String = "",
         paceSignId: String = "",
+        paceSelfSigned: Bool = false,
         allowSigningService: Bool = true,
         windows: WindowsSigningConfig = WindowsSigningConfig(),
         macos: MacosSigningConfig = MacosSigningConfig()
@@ -126,7 +170,10 @@ public struct SigningConfig: Codable, Sendable, Equatable {
         self.mode = mode
         self.paceAccount = paceAccount
         self.paceWcGuid = paceWcGuid
+        self.paceCustomerNumber = paceCustomerNumber
+        self.paceCustomerName = paceCustomerName
         self.paceSignId = paceSignId
+        self.paceSelfSigned = paceSelfSigned
         self.allowSigningService = allowSigningService
         self.windows = windows
         self.macos = macos

@@ -14,7 +14,65 @@ public final class SigningModel {
     public var dryRunOutputPath = ""
     public var dryRunMessage: String?
 
+    /// Every code-signing identity on this Mac, offered as a list so nobody has
+    /// to know that macOS --signid wants the NAME and Windows wants the hash.
+    public var identities: [SigningService.SigningIdentity] = []
+    public var wraptoolPath: String?
+    public var newCertificateName = ""
+    public var isGenerating = false
+    public var generateMessage: String?
+
     public init(store: ForgeStore) { self.store = store }
+
+    public var wcGuid: String {
+        get { store.config.signing.paceWcGuid }
+        set { store.config.signing.paceWcGuid = newValue; store.markDirty() }
+    }
+
+    public var customerNumber: String {
+        get { store.config.signing.paceCustomerNumber }
+        set { store.config.signing.paceCustomerNumber = newValue; store.markDirty() }
+    }
+
+    public var customerName: String {
+        get { store.config.signing.paceCustomerName }
+        set { store.config.signing.paceCustomerName = newValue; store.markDirty() }
+    }
+
+    /// Selecting an identity also records whether it is self-signed, so the
+    /// scripts and the UI never have to guess.
+    public func selectIdentity(_ identity: SigningService.SigningIdentity) {
+        store.config.signing.paceSignId = identity.name
+        store.config.signing.paceSelfSigned = identity.untrusted
+        store.markDirty()
+        Task { await refresh() }
+    }
+
+    public func generateSelfSigned() async {
+        let name = newCertificateName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            generateMessage = "Give the certificate a name first. It becomes the --signid value."
+            return
+        }
+        guard !isGenerating else { return }
+        isGenerating = true
+        defer { isGenerating = false }
+
+        let ok = await store.services.signingService.generateSelfSignedCertificate(
+            name: name, scriptsDirectory: store.services.scriptsDirectory)
+
+        if ok {
+            store.config.signing.paceSignId = name
+            store.config.signing.paceSelfSigned = true
+            store.markDirty()
+            newCertificateName = ""
+            generateMessage = "Created \"\(name)\" and selected it. It is a SELF-SIGNED certificate: "
+                + "good for testing in Pro Tools, not for distribution. See docs/SIGNING.md."
+        } else {
+            generateMessage = "Could not create the certificate. See the Logs page."
+        }
+        await refresh()
+    }
 
     public var mode: SigningMode {
         get { store.config.signing.modeValue }
@@ -32,11 +90,6 @@ public final class SigningModel {
     public var windowsProvider: WindowsSigningProvider {
         get { WindowsSigningProvider(rawValue: store.config.signing.windows.provider) ?? .none }
         set { store.config.signing.windows.provider = newValue.rawValue; store.markDirty() }
-    }
-
-    public var wcGuid: String {
-        get { store.config.signing.paceWcGuid }
-        set { store.config.signing.paceWcGuid = newValue; store.markDirty() }
     }
 
     public var signId: String {
@@ -81,6 +134,8 @@ public final class SigningModel {
 
         requirements = await store.services.signingService
             .requirements(for: mode, config: store.config)
+        identities = await store.services.signingService.listSigningIdentities()
+        wraptoolPath = SigningService.findWraptool()
     }
 
     /// Runs the signing path with --dry-run: every argument is assembled and
@@ -130,11 +185,107 @@ public struct SigningView: View {
                         }
                         .pickerStyle(.radioGroup)
 
-                        LabeledContent("WC GUID") {
-                            TextField("", text: $model.wcGuid).textFieldStyle(.roundedBorder)
+                    }
+                    .padding(6)
+                }
+
+                GroupBox("Who is signing (the publisher)") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ExplanationBox(
+                            text: "wraptool needs the publisher named in one of two ways, and rejects a "
+                                + "customer number without the company name beside it. Fill in EITHER the "
+                                + "Wrap Config GUID, OR both customer fields.")
+
+                        LabeledContent("Wrap Config GUID") {
+                            TextField("ED052BE6-9B79-4E72-A838-E226320B778E", text: $model.wcGuid)
+                                .textFieldStyle(.roundedBorder)
                         }
-                        LabeledContent("Sign id") {
+
+                        Text("— or —").font(.caption).foregroundStyle(.secondary)
+
+                        LabeledContent("Customer number") {
+                            TextField("ABCD-1234-ABCD-1234", text: $model.customerNumber)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        LabeledContent("Company name") {
+                            TextField("My Company, Inc.", text: $model.customerName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        LabeledContent("Sign id (advanced)") {
                             TextField("", text: $model.signId).textFieldStyle(.roundedBorder)
+                        }
+                        Text("Set automatically when you pick a certificate below. On macOS this is the "
+                             + "identity NAME, not the 40-character hash.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                }
+
+                GroupBox("Certificate") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: model.wraptoolPath == nil
+                                  ? "xmark.circle.fill" : "checkmark.circle.fill")
+                                .foregroundStyle(model.wraptoolPath == nil ? .red : .green)
+                            Text(model.wraptoolPath ?? "wraptool not found")
+                                .font(.caption.monospaced())
+                                .lineLimit(1).truncationMode(.head)
+                            Spacer()
+                            Button("Re-scan") { Task { await model.refresh() } }
+                        }
+
+                        Divider()
+
+                        if model.identities.isEmpty {
+                            Text("No code-signing identity is available to this user.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+
+                        ForEach(model.identities) { identity in
+                            HStack(spacing: 8) {
+                                Image(systemName: identity.name == model.signId
+                                      ? "largecircle.fill.circle" : "circle")
+                                    .foregroundStyle(identity.name == model.signId ? .accentColor : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(identity.name).font(.body)
+                                    Text(identity.hash).font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if identity.untrusted {
+                                    StatusBadge(text: "self-signed", tint: .orange)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { model.selectIdentity(identity) }
+                        }
+
+                        Divider()
+
+                        // The whole point of this block: someone with no
+                        // certificate at all should not have to leave the app,
+                        // read Apple's Certificate Assistant docs and come back.
+                        Text("No certificate yet?").font(.headline)
+                        HStack {
+                            TextField("name for a new test certificate", text: $model.newCertificateName)
+                                .textFieldStyle(.roundedBorder)
+                            Button(model.isGenerating ? "Creating…" : "Create self-signed certificate") {
+                                Task { await model.generateSelfSigned() }
+                            }
+                            .disabled(model.isGenerating)
+                        }
+                        ExplanationBox(
+                            symbol: "exclamationmark.triangle",
+                            text: "A self-signed certificate is PACE's recommended way to LEARN the signing "
+                                + "tools, and their explicit recommendation against shipping. The plugin "
+                                + "still loads in Pro Tools, because Pro Tools checks the PACE signature "
+                                + "and not Apple's — but it cannot be notarized, so Gatekeeper blocks it "
+                                + "on every Mac except ones told to trust the certificate. "
+                                + "docs/SIGNING.md says exactly what to do if you distribute one anyway.")
+                        if let message = model.generateMessage {
+                            Text(message).font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         if model.mode == .cloud {

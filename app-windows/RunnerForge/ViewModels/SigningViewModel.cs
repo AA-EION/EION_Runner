@@ -10,16 +10,29 @@ public sealed class SigningViewModel : ObservableObject
     private readonly SigningService _signingService;
     private readonly Func<ForgeConfig> _configAccessor;
     private readonly Action _saveConfig;
+    private readonly string _scriptsDirectory;
 
     private SigningMode _selectedMode;
 
-    public SigningViewModel(SigningService signingService, Func<ForgeConfig> configAccessor, Action saveConfig)
+    public SigningViewModel(
+        SigningService signingService, Func<ForgeConfig> configAccessor, Action saveConfig,
+        string scriptsDirectory)
     {
         _signingService = signingService;
         _configAccessor = configAccessor;
         _saveConfig = saveConfig;
+        _scriptsDirectory = scriptsDirectory;
+
+        RefreshCertificatesCommand = new RelayCommand(_ => RefreshCertificates());
+        GenerateSelfSignedCommand = new AsyncRelayCommand(
+            _ => GenerateSelfSignedAsync(_scriptsDirectory),
+            _ => !IsGenerating);
+
         Reload();
     }
+
+    public RelayCommand RefreshCertificatesCommand { get; }
+    public AsyncRelayCommand GenerateSelfSignedCommand { get; }
 
     public ObservableCollection<SigningRequirement> Requirements { get; } = [];
 
@@ -127,10 +140,150 @@ public sealed class SigningViewModel : ObservableObject
         set { _configAccessor().Signing.PaceWcGuid = value; _saveConfig(); RefreshRequirements(); OnPropertyChanged(); }
     }
 
+    public string PaceCustomerNumber
+    {
+        get => _configAccessor().Signing.PaceCustomerNumber;
+        set { _configAccessor().Signing.PaceCustomerNumber = value; _saveConfig(); RefreshRequirements(); OnPropertyChanged(); }
+    }
+
+    public string PaceCustomerName
+    {
+        get => _configAccessor().Signing.PaceCustomerName;
+        set { _configAccessor().Signing.PaceCustomerName = value; _saveConfig(); RefreshRequirements(); OnPropertyChanged(); }
+    }
+
     public string PaceSignId
     {
         get => _configAccessor().Signing.PaceSignId;
         set { _configAccessor().Signing.PaceSignId = value; _saveConfig(); RefreshRequirements(); OnPropertyChanged(); }
+    }
+
+    // -----------------------------------------------------------------------
+    // Certificates
+    //
+    // Offered as a LIST rather than a text field, because on Windows --signid
+    // takes the 40-character thumbprint while on macOS it takes the subject
+    // name. Asking a human to know which, and to retype 40 hex characters
+    // without error, is how this step goes wrong.
+    // -----------------------------------------------------------------------
+
+    public ObservableCollection<SigningService.SigningCertificate> Certificates { get; } = [];
+
+    private SigningService.SigningCertificate? _selectedCertificate;
+
+    public SigningService.SigningCertificate? SelectedCertificate
+    {
+        get => _selectedCertificate;
+        set
+        {
+            _selectedCertificate = value;
+            if (value is not null)
+            {
+                ForgeConfig config = _configAccessor();
+                config.Signing.PaceSignId = value.Thumbprint;
+                // Recording self-signed here means the scripts and the UI never
+                // have to re-derive it later, or disagree about it.
+                config.Signing.PaceSelfSigned = value.SelfSigned;
+                _saveConfig();
+                OnPropertyChanged(nameof(PaceSignId));
+                RefreshRequirements();
+            }
+            OnPropertyChanged();
+        }
+    }
+
+    public string? WraptoolPath { get; private set; }
+
+    public string WraptoolStatus => WraptoolPath ?? "wraptool.exe not found";
+
+    public bool WraptoolFound => WraptoolPath is not null;
+
+    private string _newCertificateSubject = "";
+
+    public string NewCertificateSubject
+    {
+        get => _newCertificateSubject;
+        set { _newCertificateSubject = value; OnPropertyChanged(); }
+    }
+
+    private string? _generateMessage;
+
+    public string? GenerateMessage
+    {
+        get => _generateMessage;
+        private set { _generateMessage = value; OnPropertyChanged(); }
+    }
+
+    private bool _isGenerating;
+
+    public bool IsGenerating
+    {
+        get => _isGenerating;
+        private set { _isGenerating = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>Re-reads the certificate stores and re-locates wraptool.</summary>
+    public void RefreshCertificates()
+    {
+        WraptoolPath = SigningService.FindWraptool();
+        OnPropertyChanged(nameof(WraptoolPath));
+        OnPropertyChanged(nameof(WraptoolStatus));
+        OnPropertyChanged(nameof(WraptoolFound));
+
+        Certificates.Clear();
+        string configured = _configAccessor().Signing.PaceSignId;
+
+        foreach (SigningService.SigningCertificate certificate in _signingService.ListSigningCertificates())
+        {
+            Certificates.Add(certificate);
+            if (string.Equals(certificate.Thumbprint, configured, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedCertificate = certificate;
+            }
+        }
+
+        OnPropertyChanged(nameof(SelectedCertificate));
+    }
+
+    /// <summary>
+    /// Creates a self-signed certificate so somebody with no certificate at all
+    /// does not have to leave the app, read Microsoft's docs and come back.
+    /// </summary>
+    public async Task GenerateSelfSignedAsync(string scriptsDirectory)
+    {
+        string subject = NewCertificateSubject.Trim();
+        if (subject.Length == 0)
+        {
+            GenerateMessage = "Give the certificate a name first. It becomes the certificate subject.";
+            return;
+        }
+        if (IsGenerating) return;
+
+        IsGenerating = true;
+        try
+        {
+            bool ok = await _signingService
+                .GenerateSelfSignedCertificateAsync(subject, scriptsDirectory)
+                .ConfigureAwait(true);
+
+            if (ok)
+            {
+                RefreshCertificates();
+                SelectedCertificate = Certificates.FirstOrDefault(c => c.Subject == $"CN={subject}");
+                NewCertificateSubject = "";
+                GenerateMessage =
+                    $"Created \"{subject}\" and selected it. It is a SELF-SIGNED certificate: good for "
+                    + "testing in Pro Tools, not for distribution. See docs/SIGNING.md.";
+            }
+            else
+            {
+                GenerateMessage = "Could not create the certificate. See the Logs page.";
+            }
+        }
+        finally
+        {
+            IsGenerating = false;
+        }
     }
 
     public void Reload()
@@ -142,6 +295,8 @@ public sealed class SigningViewModel : ObservableObject
 
     public void RefreshRequirements()
     {
+        if (WraptoolPath is null && Certificates.Count == 0) RefreshCertificates();
+
         Requirements.Clear();
         foreach (SigningRequirement requirement in _signingService.RequirementsFor(SelectedMode, _configAccessor()))
         {

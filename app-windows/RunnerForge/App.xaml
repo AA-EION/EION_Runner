@@ -7,5 +7,6 @@
         <!-- Converters used by the pages. Declared once, application-wide. -->
         <local:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
         <local:BoolToTickConverter x:Key="BoolToTick"/>
+        <local:InverseBoolConverter x:Key="InverseBool"/>
     </Application.Resources>
 </Application>

@@ -146,4 +146,108 @@ public sealed class TemplateRendererTests
 
         Assert.Equal("false", values["windowsSigningEnabled"]);
     }
+
+    // -----------------------------------------------------------------------
+    // Publisher arguments
+    //
+    // wraptool takes EITHER a Wrap Config GUID OR a customer number paired with
+    // the company name, and rejects the number on its own. These four tests are
+    // the only place that rule is checked before a twenty-minute build spends
+    // itself proving it.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void A_wrap_config_guid_becomes_a_single_wcguid_argument()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+        config.Signing.PaceWcGuid = "ED052BE6-9B79-4E72-A838-E226320B778E";
+
+        Assert.Equal("--wcguid 'ED052BE6-9B79-4E72-A838-E226320B778E'",
+                     TemplateRenderer.PaceIdentityArgs(config, shell: true));
+        Assert.Equal("-WcGuid 'ED052BE6-9B79-4E72-A838-E226320B778E'",
+                     TemplateRenderer.PaceIdentityArgs(config, shell: false));
+    }
+
+    [Fact]
+    public void A_customer_number_always_carries_the_company_name_with_it()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+        config.Signing.PaceWcGuid = "";
+        config.Signing.PaceCustomerNumber = "ABCD-1234-ABCD-1234";
+        config.Signing.PaceCustomerName = "My Company, Inc.";
+
+        string shell = TemplateRenderer.PaceIdentityArgs(config, shell: true);
+        Assert.Contains("--customernumber 'ABCD-1234-ABCD-1234'", shell);
+        Assert.Contains("--customername 'My Company, Inc.'", shell);
+        Assert.DoesNotContain("--wcguid", shell);
+
+        string pwsh = TemplateRenderer.PaceIdentityArgs(config, shell: false);
+        Assert.Contains("-CustomerNumber 'ABCD-1234-ABCD-1234'", pwsh);
+        Assert.Contains("-CustomerName 'My Company, Inc.'", pwsh);
+    }
+
+    /// <summary>
+    /// The failure mode this guards against: emitting a workflow with no
+    /// publisher argument at all, which fails inside wraptool minutes later with
+    /// a message that never mentions the configuration.
+    /// </summary>
+    [Fact]
+    public void A_customer_number_without_a_name_emits_a_marker_not_an_empty_string()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+        config.Signing.PaceWcGuid = "";
+        config.Signing.PaceCustomerNumber = "ABCD-1234-ABCD-1234";
+        config.Signing.PaceCustomerName = "";
+
+        string shell = TemplateRenderer.PaceIdentityArgs(config, shell: true);
+        Assert.NotEqual("", shell.Trim());
+        Assert.Contains("SET-A-WRAP-CONFIG", shell);
+        Assert.DoesNotContain("ABCD-1234", shell);
+    }
+
+    [Fact]
+    public void Nothing_configured_at_all_also_emits_the_marker()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+        config.Signing.PaceWcGuid = "";
+        config.Signing.PaceCustomerNumber = "";
+        config.Signing.PaceCustomerName = "";
+
+        Assert.Contains("SET-A-WRAP-CONFIG", TemplateRenderer.PaceIdentityArgs(config, shell: true));
+        Assert.False(config.Signing.HasPublisherIdentity);
+    }
+
+    [Fact]
+    public void Publisher_identity_needs_a_guid_or_both_customer_fields()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+
+        config.Signing.PaceWcGuid = "G";
+        config.Signing.PaceCustomerNumber = "";
+        config.Signing.PaceCustomerName = "";
+        Assert.True(config.Signing.HasPublisherIdentity);
+
+        config.Signing.PaceWcGuid = "";
+        config.Signing.PaceCustomerNumber = "N";
+        Assert.False(config.Signing.HasPublisherIdentity);
+
+        config.Signing.PaceCustomerName = "Co";
+        Assert.True(config.Signing.HasPublisherIdentity);
+    }
+
+    [Fact]
+    public void The_self_signed_flag_is_emitted_only_when_the_certificate_is_self_signed()
+    {
+        ForgeConfig config = ForgeConfig.CreateDefault("/tmp/work");
+
+        config.Signing.PaceSelfSigned = false;
+        var off = TemplateRenderer.BuildValues(config, "Canary", ".", new Dictionary<string, bool>());
+        Assert.Equal("", off["paceSelfSignedSh"]);
+        Assert.Equal("", off["paceSelfSignedPs"]);
+
+        config.Signing.PaceSelfSigned = true;
+        var on = TemplateRenderer.BuildValues(config, "Canary", ".", new Dictionary<string, bool>());
+        Assert.Contains("--self-signed", on["paceSelfSignedSh"]);
+        Assert.Contains("-SelfSigned", on["paceSelfSignedPs"]);
+    }
 }

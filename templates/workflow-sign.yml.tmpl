@@ -128,11 +128,20 @@ jobs:
                     Select-Object -First 1
           if (-not $bundle) { throw 'No .aaxplugin found in the downloaded artifact.' }
           New-Item -ItemType Directory -Force -Path signed | Out-Null
+
+          # On Windows `wraptool sign` operates IN PLACE: --in and --out must be
+          # the same path. So the bundle is copied to its final location FIRST
+          # and signed where it lands. The copy keeps the bundle's name, which
+          # matters: an .aaxplugin folder whose name differs from the binary at
+          # Contents\x64\<name>.aaxplugin is malformed, and Pro Tools rejects it
+          # with "not valid 64 bit aax plugin".
+          $target = Join-Path 'signed' $bundle.Name
+          Copy-Item -Path $bundle.FullName -Destination $target -Recurse -Force
+
           ./scripts/sign-aax-ilok.ps1 `
-            -InputPath $bundle.FullName `
-            -OutputPath (Join-Path 'signed' $bundle.Name) `
-            -WcGuid '{{paceWcGuid}}' `
-            -SignId '{{paceSignId}}'
+            -InputPath $target `
+            {{paceIdentityArgsPs}} `
+            -SignId '{{paceSignId}}'{{paceSelfSignedPs}}
 
       - name: Upload ${{ inputs.project_name }}-aax-windows
         if: always()
@@ -173,11 +182,19 @@ jobs:
           [ -n "$bundle" ] || { echo 'No .aaxplugin found in the downloaded artifact.' >&2; exit 1; }
           mkdir -p signed
           chmod +x ./scripts/sign-aax-ilok.sh
+
+          # `ditto`, not `cp`. A macOS plugin is a bundle DIRECTORY full of
+          # symlinks, and a copy that flattens them produces something that
+          # signs but fails verification. PACE names ditto and `cp -R -H` as the
+          # two copies that preserve them. Signing then happens in place, so the
+          # signature is applied to the bundle that ships.
+          target="signed/$(basename "$bundle")"
+          ditto "$bundle" "$target"
+
           ./scripts/sign-aax-ilok.sh \
-            --input "$bundle" \
-            --output "signed/$(basename "$bundle")" \
-            --wcguid '{{paceWcGuid}}' \
-            --signid '{{paceSignId}}'
+            --input "$target" \
+            {{paceIdentityArgsSh}} \
+            --signid '{{paceSignId}}'{{paceSelfSignedSh}}
 
       - name: Upload ${{ inputs.project_name }}-aax-macos
         if: always()

@@ -43,7 +43,8 @@ public partial class MainWindow : Window
         _preflightViewModel = new PreflightViewModel(
             _services.PreflightService, _services.DockerService, config);
 
-        _signingViewModel = new SigningViewModel(_services.SigningService, config, save);
+        _signingViewModel = new SigningViewModel(
+            _services.SigningService, config, save, _services.ScriptsDirectory);
 
         _runnersViewModel = new RunnersViewModel(
             _services.RunnerSupervisor, _services.SelfTestService, config, save);

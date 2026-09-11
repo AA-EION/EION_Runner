@@ -112,13 +112,21 @@ public struct ProcessRunner: Sendable {
         return URL(fileURLWithPath: "/usr/bin/env")
     }
 
-    /// True when the executable can be found on PATH.
-    public static func isOnPath(_ executable: String) -> Bool {
+    /// The full path to an executable on PATH, or nil.
+    ///
+    /// Callers that go on to RUN the tool want the path, not a boolean: a
+    /// second lookup at exec time can disagree with the first.
+    public static func resolveOnPath(_ executable: String) -> String? {
         let searchPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/local/bin"
         for directory in searchPath.split(separator: ":") {
             let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(executable)
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return true }
+            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate.path }
         }
-        return false
+        return nil
+    }
+
+    /// True when the executable can be found on PATH.
+    public static func isOnPath(_ executable: String) -> Bool {
+        resolveOnPath(executable) != nil
     }
 }

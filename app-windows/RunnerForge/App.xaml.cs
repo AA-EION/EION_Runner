@@ -19,6 +19,19 @@ public sealed class BoolToVisibilityConverter : IValueConverter
 }
 
 /// <summary>Renders a requirement's satisfied flag as a tick or a cross.</summary>
+/// <summary>
+/// Inverts a bool. Used where a control is enabled EXCEPT while something is
+/// running — binding IsEnabled directly to an IsBusy flag gets that backwards.
+/// </summary>
+public sealed class InverseBoolConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is not bool flag || !flag;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is not bool flag || !flag;
+}
+
 public sealed class BoolToTickConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
@@ -56,7 +69,18 @@ public sealed class AppServices
             LogBus, ConfigStore, GitHubActionsService, ReaperService, SweeperService);
 
         Config = ConfigStore.Load();
+
+        // The scripts are program files of this product, installed beside the
+        // executable by the MSI. Falling back to the working directory keeps a
+        // developer running from a checkout working too.
+        string beside = Path.Combine(AppContext.BaseDirectory, "scripts");
+        ScriptsDirectory = Directory.Exists(beside)
+            ? beside
+            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "scripts"));
     }
+
+    /// <summary>Where the shipped .ps1 and .sh scripts live.</summary>
+    public string ScriptsDirectory { get; }
 
     public LogBus LogBus { get; }
     public HttpClient HttpClient { get; }

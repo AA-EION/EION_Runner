@@ -122,4 +122,117 @@ struct TemplateRendererTests {
             #expect(!value.contains("BEGIN RSA PRIVATE KEY"))
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Publisher arguments
+    //
+    // wraptool takes EITHER a Wrap Config GUID OR a customer number paired with
+    // the company name, and rejects the number on its own. These tests are the
+    // only place that rule is checked before a twenty-minute build spends itself
+    // proving it.
+    // -----------------------------------------------------------------------
+
+    private func exampleConfig() -> ForgeConfig {
+        var config = ForgeConfig.makeDefault(workDir: "/tmp/rf")
+        config.github = GitHubConfig(
+            owner: "example", repos: ["plugin"], appId: "1", installationId: "2")
+        return config
+    }
+
+    @Test("a Wrap Config GUID becomes a single wcguid argument")
+    func wrapConfigBecomesOneArgument() {
+        var config = exampleConfig()
+        config.signing.paceWcGuid = "ED052BE6-9B79-4E72-A838-E226320B778E"
+
+        #expect(TemplateRenderer.paceIdentityArgs(config, shell: true)
+                == "--wcguid 'ED052BE6-9B79-4E72-A838-E226320B778E'")
+        #expect(TemplateRenderer.paceIdentityArgs(config, shell: false)
+                == "-WcGuid 'ED052BE6-9B79-4E72-A838-E226320B778E'")
+    }
+
+    @Test("a customer number always carries the company name with it")
+    func customerNumberCarriesName() {
+        var config = exampleConfig()
+        config.signing.paceWcGuid = ""
+        config.signing.paceCustomerNumber = "ABCD-1234-ABCD-1234"
+        config.signing.paceCustomerName = "My Company, Inc."
+
+        let shell = TemplateRenderer.paceIdentityArgs(config, shell: true)
+        #expect(shell.contains("--customernumber 'ABCD-1234-ABCD-1234'"))
+        #expect(shell.contains("--customername 'My Company, Inc.'"))
+        #expect(!shell.contains("--wcguid"))
+
+        let pwsh = TemplateRenderer.paceIdentityArgs(config, shell: false)
+        #expect(pwsh.contains("-CustomerNumber 'ABCD-1234-ABCD-1234'"))
+        #expect(pwsh.contains("-CustomerName 'My Company, Inc.'"))
+    }
+
+    /// The failure this guards against: emitting a workflow with no publisher
+    /// argument at all, which fails inside wraptool minutes later with a message
+    /// that never mentions the configuration.
+    @Test("a customer number without a name emits a marker, never an empty string")
+    func incompleteCustomerEmitsMarker() {
+        var config = exampleConfig()
+        config.signing.paceWcGuid = ""
+        config.signing.paceCustomerNumber = "ABCD-1234-ABCD-1234"
+        config.signing.paceCustomerName = ""
+
+        let shell = TemplateRenderer.paceIdentityArgs(config, shell: true)
+        #expect(!shell.trimmingCharacters(in: .whitespaces).isEmpty)
+        #expect(shell.contains("SET-A-WRAP-CONFIG"))
+        #expect(!shell.contains("ABCD-1234"))
+    }
+
+    @Test("publisher identity needs a GUID, or both customer fields")
+    func publisherIdentityRule() {
+        var config = exampleConfig()
+
+        config.signing.paceWcGuid = "G"
+        config.signing.paceCustomerNumber = ""
+        config.signing.paceCustomerName = ""
+        #expect(config.signing.hasPublisherIdentity)
+
+        config.signing.paceWcGuid = ""
+        config.signing.paceCustomerNumber = "N"
+        #expect(!config.signing.hasPublisherIdentity)
+
+        config.signing.paceCustomerName = "Co"
+        #expect(config.signing.hasPublisherIdentity)
+    }
+
+    @Test("the self-signed flag is emitted only when the certificate is self-signed")
+    func selfSignedFlag() {
+        var config = exampleConfig()
+
+        config.signing.paceSelfSigned = false
+        var values = TemplateRenderer.buildValues(
+            config: config, projectName: "Canary", sourceDir: ".", secretPresence: [:])
+        #expect(values["paceSelfSignedSh"] == "")
+        #expect(values["paceSelfSignedPs"] == "")
+
+        config.signing.paceSelfSigned = true
+        values = TemplateRenderer.buildValues(
+            config: config, projectName: "Canary", sourceDir: ".", secretPresence: [:])
+        #expect(values["paceSelfSignedSh"]?.contains("--self-signed") == true)
+        #expect(values["paceSelfSignedPs"]?.contains("-SelfSigned") == true)
+    }
+
+    /// A forge.json written before these fields existed must still load. A
+    /// decoder that throws on a missing key turns an upgrade into a crash.
+    @Test("a signing block without the new fields still decodes")
+    func olderConfigStillDecodes() throws {
+        let json = """
+        {"mode":"windows-ilok","paceAccount":"acct","paceWcGuid":"G","paceSignId":"S",
+         "allowSigningService":true,
+         "windows":{"provider":"none","azureEndpoint":"","azureAccount":"","azureProfile":""},
+         "macos":{"teamId":"","devIdAppIdentity":"","devIdInstallerIdentity":"","notarize":true}}
+        """
+        let signing = try JSONDecoder().decode(SigningConfig.self, from: Data(json.utf8))
+
+        #expect(signing.paceWcGuid == "G")
+        #expect(signing.paceCustomerNumber == "")
+        #expect(signing.paceCustomerName == "")
+        #expect(signing.paceSelfSigned == false)
+        #expect(signing.hasPublisherIdentity)
+    }
 }

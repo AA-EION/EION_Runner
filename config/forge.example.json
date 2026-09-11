@@ -47,7 +47,10 @@
     "mode": "windows-ilok",
     "paceAccount": "example-pace-account",
     "paceWcGuid": "00000000-0000-0000-0000-000000000000",
-    "paceSignId": "example-sign-id",
+    "paceCustomerNumber": "",
+    "paceCustomerName": "",
+    "paceSignId": "Developer ID Application: Example Audio (ABCDE12345)",
+    "paceSelfSigned": false,
     "allowSigningService": true,
     "windows": {
       "provider": "azure-trusted-signing",

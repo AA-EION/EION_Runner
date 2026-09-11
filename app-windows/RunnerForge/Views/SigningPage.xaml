@@ -59,13 +59,76 @@
                          HorizontalAlignment="Left" Margin="0,0,0,4"/>
                 <CheckBox Content="Notarize and staple" IsChecked="{Binding Notarize}" Margin="0,4,0,16"/>
 
-                <TextBlock Text="PACE identifiers" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBlock Text="Who is signing (the publisher)" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#666" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="wraptool needs the publisher named in one of two ways, and rejects a customer number without the company name beside it. Fill in EITHER the Wrap Config GUID, OR both customer fields."/>
+
+                <TextBlock Text="PACE account" Margin="0,4,0,2"/>
                 <TextBox Text="{Binding PaceAccount, UpdateSourceTrigger=PropertyChanged}" Width="420"
                          HorizontalAlignment="Left" Margin="0,0,0,4"/>
+
+                <TextBlock Text="Wrap Config GUID" Margin="0,4,0,2"/>
                 <TextBox Text="{Binding PaceWcGuid, UpdateSourceTrigger=PropertyChanged}" Width="420"
                          HorizontalAlignment="Left" Margin="0,0,0,4"/>
-                <TextBox Text="{Binding PaceSignId, UpdateSourceTrigger=PropertyChanged}" Width="420"
+
+                <TextBlock Text="— or —" Foreground="#666" Margin="0,4,0,4"/>
+
+                <TextBlock Text="Customer number" Margin="0,0,0,2"/>
+                <TextBox Text="{Binding PaceCustomerNumber, UpdateSourceTrigger=PropertyChanged}" Width="420"
                          HorizontalAlignment="Left" Margin="0,0,0,4"/>
+                <TextBlock Text="Company name" Margin="0,4,0,2"/>
+                <TextBox Text="{Binding PaceCustomerName, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,16"/>
+
+                <TextBlock Text="Certificate" FontWeight="Bold" Margin="0,0,0,6"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="{Binding WraptoolStatus}" FontFamily="Consolas"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                    <Button Content="Re-scan" Command="{Binding RefreshCertificatesCommand}" Margin="8,0,0,0"/>
+                </StackPanel>
+
+                <!-- A list, not a text field: on Windows -\-signid takes the
+                     40-character thumbprint while on macOS it takes the subject
+                     name, and retyping 40 hex characters is how this goes wrong. -->
+                <ListBox ItemsSource="{Binding Certificates}"
+                         SelectedItem="{Binding SelectedCertificate}"
+                         Height="120" Width="560" HorizontalAlignment="Left" Margin="0,0,0,6">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Subject}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="  SELF-SIGNED" Foreground="#B35C00" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding SelfSigned, Converter={StaticResource BoolToVisibility}}"/>
+                                    <TextBlock Text="  EXPIRED" Foreground="#C00" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding Expired, Converter={StaticResource BoolToVisibility}}"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding Thumbprint}" FontFamily="Consolas"
+                                           FontSize="11" Foreground="#666"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock Text="Sign id (set by the list above)" Margin="0,4,0,2"/>
+                <TextBox Text="{Binding PaceSignId, UpdateSourceTrigger=PropertyChanged}" Width="420"
+                         HorizontalAlignment="Left" Margin="0,0,0,12"/>
+
+                <TextBlock Text="No certificate yet?" FontWeight="Bold" Margin="0,0,0,4"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBox Text="{Binding NewCertificateSubject, UpdateSourceTrigger=PropertyChanged}"
+                             Width="300" VerticalAlignment="Center"/>
+                    <Button Content="Create self-signed certificate"
+                            Command="{Binding GenerateSelfSignedCommand}"
+                            IsEnabled="{Binding IsGenerating, Converter={StaticResource InverseBool}}"
+                            Margin="8,0,0,0"/>
+                </StackPanel>
+                <TextBlock Foreground="#B35C00" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="A self-signed certificate is PACE's recommended way to LEARN the signing tools, and their explicit recommendation against shipping. The plugin still loads in Pro Tools, because Pro Tools checks the PACE signature and not Authenticode — but Windows will not trust it on any machine that has not installed the certificate as a trusted root. docs/SIGNING.md says exactly what to do if you distribute one anyway."/>
+                <TextBlock Text="{Binding GenerateMessage}" TextWrapping="Wrap" Margin="0,0,0,8"/>
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
